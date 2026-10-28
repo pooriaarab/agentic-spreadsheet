@@ -41,7 +41,10 @@ export interface Cell {
   value: CellValue | null;
   formula: string | null;
   format: CellFormat;
+  // Who last wrote the content (or cleared it). A format edit never changes it.
   author: Author | null;
+  // Who last changed the format.
+  formatAuthor: Author | null;
 }
 
 export interface SheetInfo {
@@ -67,7 +70,7 @@ const COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
 type YSheet = Y.Map<unknown>;
 // One flat map per sheet. A cell is a few keys: `A1:c` (content), `A1:by` (the last
-// editor), and `A1:fmt.<field>`. Flat keys let two writers who touch one new cell merge.
+// content editor), `A1:fby` (the last format editor), and `A1:fmt.<field>`. Flat keys let two writers who touch one new cell merge.
 type Cells = Y.Map<unknown>;
 type Stamp = Principal & { at: string };
 
@@ -129,7 +132,7 @@ export class Workbook {
   setColumnWidth(name: string, column: string, width: number): void {
     const letters = column.toUpperCase();
     if (!/^[A-Z]{1,3}$/.test(letters) || colIndex(letters) > MAX_COL) throw new SheetError(`invalid column "${column}"`);
-    if (!(width > 0)) throw new SheetError(`invalid column width ${width}`);
+    if (typeof width !== "number" || !Number.isFinite(width) || width <= 0) throw new SheetError(`invalid column width ${width}`);
     (this.find(name).get("widths") as Y.Map<number>).set(letters, width);
   }
 
@@ -176,7 +179,7 @@ export class Workbook {
             if (value === null) cells.delete(`${addr}:fmt.${field}`);
             else if (value !== undefined) cells.set(`${addr}:fmt.${field}`, value);
           }
-          tidy(cells, addr, by);
+          tidyFormat(cells, addr, by);
         }
       }
     });
@@ -242,31 +245,40 @@ function usedAddresses(cells: Cells): Set<string> {
   return used;
 }
 
-function stamp(cells: Cells, addr: string, by: Principal): void {
-  cells.set(`${addr}:by`, { id: by.id, kind: by.kind, at: new Date().toISOString() });
+function stamp(cells: Cells, key: string, by: Principal): void {
+  cells.set(key, { id: by.id, kind: by.kind, at: new Date().toISOString() });
 }
 
-// Keep the editor stamp while the cell holds content or a format. Drop it when the cell is empty.
-function tidy(cells: Cells, addr: string, by: Principal): void {
-  const used = cells.has(`${addr}:c`) || FORMAT_FIELDS.some((field) => cells.has(`${addr}:fmt.${field}`));
-  if (used) stamp(cells, addr, by);
-  else cells.delete(`${addr}:by`);
+const hasFormat = (cells: Cells, addr: string) => FORMAT_FIELDS.some((field) => cells.has(`${addr}:fmt.${field}`));
+
+// After a format edit: stamp the format editor while a format remains. Leave the content editor alone.
+function tidyFormat(cells: Cells, addr: string, by: Principal): void {
+  if (hasFormat(cells, addr)) stamp(cells, `${addr}:fby`, by);
+  else {
+    cells.delete(`${addr}:fby`);
+    if (!cells.has(`${addr}:c`)) cells.delete(`${addr}:by`);
+  }
 }
 
 function putValue(cells: Cells, addr: string, value: CellInput, by: Principal): void {
   if (value === null || value === "") {
-    if (cells.has(`${addr}:c`)) cells.delete(`${addr}:c`);
-    else if (!cells.has(`${addr}:by`)) return;
-    tidy(cells, addr, by);
+    if (!cells.has(`${addr}:c`)) return;
+    cells.delete(`${addr}:c`);
+    if (hasFormat(cells, addr)) stamp(cells, `${addr}:by`, by);
+    else cells.delete(`${addr}:by`);
     return;
   }
   cells.set(`${addr}:c`, value);
-  stamp(cells, addr, by);
+  stamp(cells, `${addr}:by`, by);
 }
+
+const toAuthor = (by: Stamp | undefined): Author | null =>
+  by === undefined ? null : { id: by.id, kind: by.kind, machine: isMachineMade(by.kind), at: by.at };
 
 function toCell(cells: Cells, addr: string): Cell {
   const by = cells.get(`${addr}:by`) as Stamp | undefined;
-  if (by === undefined) return { value: null, formula: null, format: {}, author: null };
+  const fby = cells.get(`${addr}:fby`) as Stamp | undefined;
+  if (by === undefined && fby === undefined) return { value: null, formula: null, format: {}, author: null, formatAuthor: null };
   const content = cells.get(`${addr}:c`);
   const valid = typeof content === "string" || typeof content === "boolean" || (typeof content === "number" && Number.isFinite(content));
   const format: Record<string, unknown> = {};
@@ -279,6 +291,7 @@ function toCell(cells: Cells, addr: string): Cell {
     value: valid && formula === null ? (content as CellValue) : null,
     formula,
     format: format as CellFormat,
-    author: { id: by.id, kind: by.kind, machine: isMachineMade(by.kind), at: by.at },
+    author: toAuthor(by),
+    formatAuthor: toAuthor(fby),
   };
 }

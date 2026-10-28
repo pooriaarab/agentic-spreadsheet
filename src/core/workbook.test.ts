@@ -14,6 +14,8 @@ import { Workbook, type Principal } from "./workbook.js";
 // - a grid of 150,000 rows throws RangeError, or a write takes a number past the cell text limit
 // - NaN, Infinity, an object, or an array is stored as a value; a format patch takes unknown keys,
 //   a bad color, or a bad alignment; a format write covers more than 100,000 cells
+// - a format edit restamps the cell's value author, so machine output reads as human output
+// - a column width of Infinity or "5" passes
 // - clearing the content and the last format field leaves a key behind
 
 const human: Principal = { id: "u1", kind: "human" };
@@ -69,6 +71,27 @@ describe("writes and reads", () => {
   });
 });
 
+describe("authors of value and format", () => {
+  test("a format edit leaves the value author alone and records the format author", () => {
+    const wb = book();
+    wb.writeRange("Sheet1", "A1", [[5]], agent);
+    wb.setFormat("Sheet1", "A1", { numberFormat: "$0.00" }, human);
+    expect(wb.readRange("Sheet1", "A1")[0][0]).toMatchObject({
+      author: { id: "a1", machine: true },
+      formatAuthor: { id: "u1", machine: false },
+    });
+  });
+
+  test("a format-only cell has no value author; clearing a value keeps the format author", () => {
+    const wb = book();
+    wb.setFormat("Sheet1", "A1", { bold: true }, human);
+    expect(wb.readRange("Sheet1", "A1")[0][0]).toMatchObject({ author: null, formatAuthor: { id: "u1" } });
+    wb.writeRange("Sheet1", "A1", [[1]], agent);
+    wb.writeRange("Sheet1", "A1", [[null]], agent);
+    expect(wb.readRange("Sheet1", "A1")[0][0]).toMatchObject({ formatAuthor: { machine: false }, format: { bold: true } });
+  });
+});
+
 describe("sheets", () => {
   test("frozen rows and column widths validate", () => {
     const wb = book();
@@ -78,6 +101,7 @@ describe("sheets", () => {
     expect(() => wb.setFrozenRows("Sheet1", -1)).toThrow(/frozen/);
     expect(() => wb.setColumnWidth("Sheet1", "A1", 5)).toThrow(/column/);
     expect(() => wb.setColumnWidth("Sheet1", "A", 0)).toThrow(/width/);
+    for (const bad of [Infinity, "5", Number.NaN]) expect(() => wb.setColumnWidth("Sheet1", "A", bad as never)).toThrow(/width/);
   });
 
   test("order, duplicates, and bad names", () => {
