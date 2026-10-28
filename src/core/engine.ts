@@ -8,14 +8,31 @@ export type ErrorCode = "#REF!" | "#DIV/0!" | "#NAME?" | "#VALUE!" | "#NUM!" | "
 export type ErrorValue = { error: ErrorCode };
 export type Value = number | string | boolean | null | ErrorValue;
 type Matrix = Value[][];
-type Ctx = { home: string };
+type Pos = { sheet: string; col: number; row: number; key: string };
+// The state of one formula while it is evaluated. `circ` holds cells met while they were
+// open: they read as #CIRCULAR. `cyc` is set when the cell lies on a loop.
+interface Frame {
+  pos: Pos;
+  formula: string;
+  circ: Set<string>;
+  cyc: boolean;
+  points: Set<string>;
+  ranges: { sheet: string; r: RangePos }[];
+  volatile: boolean;
+}
+type Ctx = { home: string; frame: Frame };
+// Thrown when a formula reads a formula cell that has no value yet. The driver computes those
+// cells first, then evaluates the formula again.
+class Need {
+  constructor(readonly cells: Pos[]) {}
+}
+const VOLATILE = new Set(["NOW", "TODAY", "RAND", "RANDBETWEEN"]);
 type Ref = Extract<Node, { t: "ref" }>;
 
 const ERRORS = new Set<string>(["#REF!", "#DIV/0!", "#NAME?", "#VALUE!", "#NUM!", "#N/A", "#CIRCULAR", "#DEPTH!"]);
 const MAX_RANGE_CELLS = 1_000_000;
-// Range cells one cell may read, and levels of cell-to-cell nesting one read may follow.
+// Range cells one formula may read.
 const MAX_WORK = 10_000_000;
-const MAX_DEPTH = 400;
 // formulajs reads a blank cell as 0. These groups need another reading.
 const TEXT_FUNCTIONS = new Set([
   "LEFT", "RIGHT", "MID", "LEN", "UPPER", "LOWER", "TRIM", "CONCAT", "TEXT", "CONCATENATE", "SUBSTITUTE", "FIND",
@@ -133,85 +150,212 @@ function fromJs(r: unknown): Value {
   return typeof r === "string" || typeof r === "boolean" ? r : null;
 }
 
-// Computes cell values. Each value() or values() call starts with an
-// empty cache, so TODAY and NOW stay fresh and no value goes stale.
+const keyOf = (sheet: string, address: string) => `${sheet.toLowerCase()}!${address}`;
+
+// Computes cell values and keeps them. A value stays until a change to the workbook reaches it.
+// The engine records what each formula read, including the cells and ranges in the branch of an
+// IF that ran. A change to a cell clears only the values that read it, directly or through
+// other cells. Evaluation uses an explicit stack, so a chain of any length cannot overflow.
+// Call dispose() when you are done with an engine whose workbook lives on.
 export class Engine {
   private readonly cache = new Map<string, Value>();
-  // Cells being computed now, with their depth in the chain.
-  private readonly visiting = new Map<string, number>();
-  private depth = 0;
-  // The shallowest open loop. A value computed inside a loop is not cached,
-  // so it does not depend on which cell the read started from.
-  private taint = Infinity;
+  private readonly asts = new Map<string, Node>();
+  // What each cached formula read, and the reverse: which formulas read each cell.
+  private readonly reads = new Map<string, Set<string>>();
+  private readonly readers = new Map<string, Set<string>>();
+  private readonly rangesOf = new Map<string, { sheet: string; r: RangePos }[]>();
+  private readonly rangeReaders = new Map<string, Set<string>>();
+  private readonly volatile = new Set<string>();
+  private names: string[] | null = null;
   private work = 0;
+  private readonly stop: () => void;
+  // How many formulas this engine has computed. A read that hits the cache does not add to it.
+  evaluations = 0;
 
-  constructor(private readonly wb: Workbook) {}
+  constructor(private readonly wb: Workbook) {
+    this.stop = wb.onChange((change) => {
+      if (change.all) return this.clear();
+      this.invalidate(change.cells.map(({ sheet, address }) => keyOf(sheet, address)), true);
+    });
+  }
+
+  dispose(): void {
+    this.stop();
+  }
 
   value(sheet: string, cell: string): Value {
     const { col, row } = parseCell(cell);
-    this.reset();
-    return this.cellValue(this.wb.sheetInfo(sheet).name, col, row);
+    this.refresh();
+    return this.resolve(this.wb.sheetInfo(sheet).name, col, row);
   }
 
   values(sheet: string, range: string): Matrix {
     const name = this.wb.sheetInfo(sheet).name;
     const r = parseRange(range);
-    this.reset();
+    this.refresh();
     return Array.from({ length: r.r2 - r.r1 + 1 }, (_, dr) =>
-      Array.from({ length: r.c2 - r.c1 + 1 }, (_, dc) => {
-        this.work = 0;
-        return this.cellValue(name, r.c1 + dc, r.r1 + dr);
-      }),
+      Array.from({ length: r.c2 - r.c1 + 1 }, (_, dc) => this.resolve(name, r.c1 + dc, r.r1 + dr)),
     );
   }
 
-  private reset(): void {
-    this.cache.clear();
-    this.visiting.clear();
-    [this.depth, this.taint, this.work] = [0, Infinity, 0];
+  private clear(): void {
+    for (const map of [this.cache, this.asts, this.reads, this.readers, this.rangesOf, this.rangeReaders]) map.clear();
+    this.volatile.clear();
+    this.names = null;
   }
 
-  private cellValue(sheet: string, col: number, row: number): Value {
-    const a1 = formatCell({ col, row });
-    const raw = this.wb.raw(sheet, col, row);
-    if (raw.formula === null) return raw.value;
-    const key = `${sheet.toLowerCase()}!${a1}`;
-    const hit = this.cache.get(key);
-    if (hit !== undefined) return hit;
-    const open = this.visiting.get(key);
-    if (open !== undefined) {
-      this.taint = Math.min(this.taint, open);
-      return err("#CIRCULAR");
+  // NOW, TODAY, and RAND are new on every read, and so are the cells that read them.
+  private refresh(): void {
+    if (this.volatile.size > 0) this.invalidate([...this.volatile], false);
+  }
+
+  // Clear the values of `seeds` and of every cell that reads one of them. A seed whose content
+  // changed also loses its parsed formula.
+  private invalidate(seeds: string[], contentChanged: boolean): void {
+    const seen = new Set(seeds);
+    const queue = [...seeds];
+    if (contentChanged) for (const seed of seeds) this.asts.delete(seed);
+    while (queue.length > 0) {
+      const key = queue.pop() as string;
+      for (const reader of this.readersOf(key)) if (!seen.has(reader)) (seen.add(reader), queue.push(reader));
+      this.drop(key);
     }
-    if (this.depth >= MAX_DEPTH) return err("#DEPTH!");
-    const mine = this.depth;
-    this.visiting.set(key, mine);
-    this.depth += 1;
-    let out: Value;
-    try {
-      out = this.scalar(parse(raw.formula, sheet), { home: sheet }) ?? 0;
-    } catch (error) {
-      if (error instanceof DepthError || error instanceof RangeError) out = err("#DEPTH!");
-      else if (error instanceof ParseError) out = err("#VALUE!");
-      else throw error;
-    } finally {
-      this.depth = mine;
-      this.visiting.delete(key);
+  }
+
+  private readersOf(key: string): string[] {
+    const out = [...(this.readers.get(key) ?? [])];
+    const cut = key.lastIndexOf("!");
+    const sheet = key.slice(0, cut);
+    const at = parseCell(key.slice(cut + 1));
+    for (const owner of this.rangeReaders.get(sheet) ?? []) {
+      const hit = this.rangesOf.get(owner)?.some((x) => x.sheet === sheet && at.col >= x.r.c1 && at.col <= x.r.c2 && at.row >= x.r.r1 && at.row <= x.r.r2);
+      if (hit) out.push(owner);
     }
-    if (mine < this.taint) this.cache.set(key, out);
-    if (mine <= this.taint) this.taint = Infinity;
     return out;
   }
 
-  private matrix(sheet: string, r: RangePos): Matrix {
-    return Array.from({ length: r.r2 - r.r1 + 1 }, (_, dr) =>
-      Array.from({ length: r.c2 - r.c1 + 1 }, (_, dc) => this.cellValue(sheet, r.c1 + dc, r.r1 + dr)),
+  private drop(key: string): void {
+    this.cache.delete(key);
+    this.volatile.delete(key);
+    for (const read of this.reads.get(key) ?? []) {
+      const set = this.readers.get(read);
+      if (set?.delete(key) && set.size === 0) this.readers.delete(read);
+    }
+    this.reads.delete(key);
+    for (const { sheet } of this.rangesOf.get(key) ?? []) this.rangeReaders.get(sheet)?.delete(key);
+    this.rangesOf.delete(key);
+  }
+
+  private resolve(sheet: string, col: number, row: number): Value {
+    const raw = this.wb.raw(sheet, col, row);
+    if (raw.formula === null) return raw.value;
+    const pos = { sheet, col, row, key: keyOf(sheet, formatCell({ col, row })) };
+    if (!this.cache.has(pos.key)) this.run(pos);
+    return this.cache.get(pos.key) as Value;
+  }
+
+  private frame(pos: Pos): Frame {
+    const formula = this.wb.raw(pos.sheet, pos.col, pos.row).formula as string;
+    return { pos, formula, circ: new Set(), cyc: false, points: new Set(), ranges: [], volatile: false };
+  }
+
+  // Compute `root` and the formula cells it needs, nearest first, on an explicit stack. A formula
+  // that needs a cell with no value yet waits, and the driver runs it again once the cell is ready.
+  // A cell it needs that is already waiting is a loop: the cells from there to here are on it.
+  private run(root: Pos): void {
+    const stack: Frame[] = [this.frame(root)];
+    const waiting = new Map<string, number>();
+    const chain: Frame[] = [];
+    while (stack.length > 0) {
+      const f = stack[stack.length - 1];
+      const { key } = f.pos;
+      if (this.cache.has(key)) {
+        stack.pop();
+        continue;
+      }
+      let out: Value;
+      try {
+        out = this.attempt(f);
+      } catch (need) {
+        if (!(need instanceof Need)) throw need;
+        if (!waiting.has(key)) (waiting.set(key, chain.length), chain.push(f));
+        for (const m of need.cells) {
+          const at = waiting.get(m.key);
+          if (at !== undefined) {
+            f.circ.add(m.key);
+            for (let i = at; i < chain.length; i += 1) chain[i].cyc = true;
+          } else if (!this.cache.has(m.key)) stack.push(this.frame(m));
+        }
+        continue;
+      }
+      this.finish(f, f.cyc ? err("#CIRCULAR") : out);
+      if (waiting.delete(key)) chain.pop();
+      stack.pop();
+    }
+  }
+
+  private attempt(f: Frame): Value {
+    f.points.clear();
+    f.ranges.length = 0;
+    f.volatile = false;
+    this.work = 0;
+    try {
+      let ast = this.asts.get(f.pos.key);
+      if (ast === undefined) (ast = parse(f.formula, f.pos.sheet), this.asts.set(f.pos.key, ast));
+      return this.scalar(ast, { home: f.pos.sheet, frame: f }) ?? 0;
+    } catch (error) {
+      if (error instanceof Need) throw error;
+      if (error instanceof DepthError || error instanceof RangeError) return err("#DEPTH!");
+      if (error instanceof ParseError) return err("#VALUE!");
+      throw error;
+    }
+  }
+
+  private finish(f: Frame, out: Value): void {
+    const { key } = f.pos;
+    this.evaluations += 1;
+    this.cache.set(key, out);
+    this.reads.set(key, f.points);
+    for (const read of f.points) {
+      const set = this.readers.get(read) ?? new Set<string>();
+      this.readers.set(read, set.add(key));
+    }
+    if (f.ranges.length > 0) {
+      this.rangesOf.set(key, f.ranges);
+      for (const { sheet } of f.ranges) this.rangeReaders.set(sheet, (this.rangeReaders.get(sheet) ?? new Set<string>()).add(key));
+    }
+    if (f.volatile) this.volatile.add(key);
+  }
+
+  // The value of a cell, recorded as something this formula read. A formula cell with no value
+  // yet is a Need, or is added to `missing` when the caller reads a whole range.
+  private read(f: Frame, sheet: string, col: number, row: number, missing?: Pos[]): Value {
+    const raw = this.wb.raw(sheet, col, row);
+    const key = keyOf(sheet, formatCell({ col, row }));
+    if (missing === undefined) f.points.add(key);
+    if (raw.formula === null) return raw.value;
+    if (f.circ.has(key)) return err("#CIRCULAR");
+    const hit = this.cache.get(key);
+    if (hit !== undefined) return hit;
+    if (missing === undefined) throw new Need([{ sheet, col, row, key }]);
+    missing.push({ sheet, col, row, key });
+    return null;
+  }
+
+  private matrix(sheet: string, r: RangePos, f: Frame): Matrix {
+    f.ranges.push({ sheet: sheet.toLowerCase(), r });
+    const missing: Pos[] = [];
+    const rows = Array.from({ length: r.r2 - r.r1 + 1 }, (_, dr) =>
+      Array.from({ length: r.c2 - r.c1 + 1 }, (_, dc) => this.read(f, sheet, r.c1 + dc, r.r1 + dr, missing)),
     );
+    if (missing.length > 0) throw new Need(missing);
+    return rows;
   }
 
   // The sheet a ref points at, or #REF! when it does not exist.
   private target(node: Ref, ctx: Ctx): string | ErrorValue {
-    const name = this.wb.sheetNames().find((n) => sameSheet(n, node.sheet ?? ctx.home));
+    this.names ??= this.wb.sheetNames();
+    const name = this.names.find((n) => sameSheet(n, node.sheet ?? ctx.home));
     return name ?? err("#REF!");
   }
 
@@ -222,7 +366,7 @@ export class Engine {
       case "ref": {
         const sheet = this.target(node, ctx);
         if (isErr(sheet)) return sheet;
-        return node.isRange ? err("#VALUE!") : this.cellValue(sheet, node.range.c1, node.range.r1);
+        return node.isRange ? err("#VALUE!") : this.read(ctx.frame, sheet, node.range.c1, node.range.r1);
       }
       case "un": {
         const v = this.scalar(node.a, ctx);
@@ -267,11 +411,12 @@ export class Engine {
     const { c1, c2, r1, r2 } = node.range;
     const cells = (c2 - c1 + 1) * (r2 - r1 + 1);
     this.work += cells;
-    return cells > MAX_RANGE_CELLS || this.work > MAX_WORK ? err("#VALUE!") : this.matrix(sheet, node.range);
+    return cells > MAX_RANGE_CELLS || this.work > MAX_WORK ? err("#VALUE!") : this.matrix(sheet, node.range, ctx.frame);
   }
 
   private call(node: Extract<Node, { t: "fn" }>, ctx: Ctx): Value {
     const { name, args } = node;
+    if (VOLATILE.has(name)) ctx.frame.volatile = true;
     if (name === "IF") {
       if (args.length < 2 || args.length > 3) return err("#VALUE!");
       const test = toBool(this.scalar(args[0], ctx));

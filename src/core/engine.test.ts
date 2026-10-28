@@ -15,9 +15,9 @@ import { Workbook, type CellInput } from "./workbook.js";
 //   instead of "" in CONCATENATE, SUBSTITUTE, FIND, EXACT; text or TRUE from a single-cell ref counts in SUM
 // - MIN or MAX over 200,000 numbers throws RangeError; 0^0 and 0^-1 give 1 and #NUM!
 // - REPT, BASE, DEC2BIN, MUNIT, or EXPAND can build a huge string or array
-// - a 5,000-deep chain, 4,000 parens, 5,000 minus signs, 2,000 nested IFs, or a 3,000-term sum throws
-//   RangeError and fails every read that covers the cell, instead of one cell showing #DEPTH!
-// - a failed deep read leaves a stale key, so the next read shows #CIRCULAR for a cell with no loop
+// - 4,000 parens, 5,000 minus signs, 2,000 nested IFs, or a 3,000-term sum throws RangeError and
+//   fails every read that covers the cell, instead of one cell showing #DEPTH!
+// - a 5,000-cell chain gives an error, or a deep formula leaves state behind that breaks the next read
 // - A1 = IFERROR(B1, 5) with B1 = A1 reads as 5 through value() but #CIRCULAR through values()
 
 const me = { id: "u", kind: "human" } as const;
@@ -145,20 +145,15 @@ describe("large and deep input", () => {
     expect(engine.values("Sheet1", "B1:D1")).toEqual([[200_000, 1, 20_000_100_000]]);
   });
 
-  test("a deep chain is a cell error, never a throw, and the next read has no stale state", () => {
+  test("a 5,000-cell chain reads from its far end, and the next read is clean", () => {
     const { wb, engine } = chain(5_000);
-    const last = engine.value("Sheet1", "B5000");
-    expect(last).toEqual(err("#DEPTH!"));
-    expect(engine.value("Sheet1", "B3")).toBe(3);
+    expect(engine.value("Sheet1", "B5000")).toBe(5_000);
     expect(engine.values("Sheet1", "A1:B3")).toEqual([[1, 1], [null, 2], [null, 3]]);
     wb.writeRange("Sheet1", "D1", [["=SUM(A1:B2)"]], me);
     expect(engine.value("Sheet1", "D1")).toBe(4);
   });
 
-  test("reading the chain from the top works and the poison cell stays in its own cell", () => {
-    const { engine } = chain(5_000);
-    const rows = engine.values("Sheet1", "B1:B5000");
-    expect(rows[4_999]).toEqual([5_000]);
+  test("a poison cell stays in its own cell", () => {
     const poisoned = setup({ A1: 1, B1: `=${"(".repeat(4000)}1${")".repeat(4000)}`, C1: 3 });
     expect(poisoned.engine.values("Sheet1", "A1:C1")).toEqual([[1, err("#DEPTH!"), 3]]);
   });

@@ -63,6 +63,8 @@ starts with `+ - @` or a control character, and import removes it, so a round tr
   A ref to a deleted cell becomes `#REF!`. A range shrinks or grows to match.
   An insert that would push a cell off the grid is refused. A count is at most 10,000.
 - A formula engine reads the workbook. It has `+ - * / ^ & %`, comparisons, and cross-sheet refs.
+  It keeps values between reads. A change recomputes only the cells that read it, and a chain of
+  100,000 cells works. Call `engine.dispose()` when the workbook outlives the engine.
   It returns `#REF!`, `#DIV/0!`, `#NAME?`, `#VALUE!`, `#NUM!`, `#N/A`, `#CIRCULAR`, and `#DEPTH!`.
 - Functions: `IF`, `IFS`, `IFERROR`, `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`, `COUNTIF(S)`,
   `SUMIF(S)`, `VLOOKUP`, `XLOOKUP`, `INDEX`, `MATCH`, `AND`, `OR`, `NOT`, `ROUND`, `ROUNDUP`,
@@ -78,10 +80,11 @@ starts with `+ - @` or a control character, and import removes it, so a round tr
 
 ## Limits
 
-- The engine keeps no cache between calls, so there is no incremental recalc yet.
-  A chain of more than 400 dependent cells, a formula nested more than 100 levels deep, and a formula
-  with more than 1,000 chained operators give `#DEPTH!` in that cell. Other cells are not affected.
-  A loop gives `#CIRCULAR` in every cell of the loop, whichever cell you read first.
+- A formula nested more than 100 levels deep, or with more than 1,000 chained operators, gives
+  `#DEPTH!` in that cell. Other cells are not affected. A chain of cells has no depth limit.
+- A loop gives `#CIRCULAR` in every cell on the loop, whichever cell you read first.
+- A change to a cell finds the formulas that read it through a range by a scan of all ranges on
+  that sheet. A sheet with very many range formulas pays for that scan on each edit.
 - Ref rewriting does not handle whole-column refs such as `A:A`.
 - Insert, delete, and rename need one writer at a time. They move cells and rewrite formulas,
   and that does not merge. If two clients do it at once, `structureConflict()` turns true after the
