@@ -16,4 +16,5 @@ sparse cells keyed by A1 coordinates. A cell holds a value or a formula.
 
 - Pass your own principal on every write. Use an agent kind, never `human`.
 - A string that starts with `=` is a formula. Pass a number as a number.
+- Read the result after you insert or delete rows or columns. Refs to deleted cells read `#REF!`.
 - Report errors as errors. Never present a failed call as success.
