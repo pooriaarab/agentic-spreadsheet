@@ -2,8 +2,9 @@ import { z } from "zod";
 import { colLetters, MAX_ROW, parseRange } from "./core/a1.js";
 import { Engine } from "./core/engine.js";
 import { formatCsv, inferCell, parseCsv } from "./core/csv.js";
-import { FileStore, type Store } from "./core/store.js";
-import { MAX_STRUCTURE_COUNT, PRINCIPAL_KINDS, SheetError, Workbook, type Principal, type PrincipalKind } from "./core/workbook.js";
+import { fromBase64, toBase64 } from "./core/bytes.js";
+import type { Store } from "./core/store.js";
+import { MAX_STRUCTURE_COUNT, SheetError, Workbook, type Principal } from "./core/workbook.js";
 
 // One list of operations serves the CLI and the MCP server.
 
@@ -13,18 +14,14 @@ export interface Ctx {
   principal(): Principal;
 }
 
-export function ctxFromEnv(env: Record<string, string | undefined>): Ctx {
-  return {
-    store: new FileStore(env.SHEET_DIR ?? ".sheets"),
-    principal() {
-      const { SHEET_AS: id = "", SHEET_KIND: kind = "" } = env;
-      if (id === "") throw new Error("say who is writing: set --as <id> (or SHEET_AS)");
-      if (!PRINCIPAL_KINDS.includes(kind as PrincipalKind)) {
-        throw new Error(`say what kind of writer this is: set --kind (or SHEET_KIND) to one of ${PRINCIPAL_KINDS.join(", ")}`);
-      }
-      return { id, kind: kind as PrincipalKind };
-    },
-  };
+// An error with an HTTP-style status, so the Worker can answer 404 or 409 and not a blanket 400.
+export class OpError extends Error {
+  constructor(
+    message: string,
+    readonly status: 404 | 409,
+  ) {
+    super(message);
+  }
 }
 
 export function message(error: unknown): string {
@@ -57,8 +54,8 @@ const grid = z.preprocess(
 
 async function open(store: Store, id: string): Promise<Workbook> {
   const doc = await store.get("workbooks", id);
-  if (doc === null) throw new Error(`no workbook "${id}"`);
-  return Workbook.fromState(Buffer.from(doc.state as string, "base64"));
+  if (doc === null) throw new OpError(`no workbook "${id}"`, 404);
+  return Workbook.fromState(fromBase64(doc.state as string));
 }
 
 // Read, change, and save one workbook while holding the store lock. The workbook is saved only
@@ -67,7 +64,7 @@ function edit<T>(ctx: Ctx, id: string, change: (wb: Workbook) => T): Promise<T> 
   return ctx.store.transaction(async (store) => {
     const wb = await open(store, id);
     const result = change(wb);
-    await store.put("workbooks", id, { name: id, state: Buffer.from(wb.encode()).toString("base64"), updatedAt: new Date().toISOString() });
+    await store.put("workbooks", id, { name: id, state: toBase64(wb.encode()), updatedAt: new Date().toISOString() });
     return result;
   });
 }
@@ -83,10 +80,10 @@ export const OPS: Op[] = [
     shape: { book, sheet: z.string().optional().describe("Name of the first sheet. Defaults to Sheet1.") },
     run(a: { book: string; sheet?: string }, ctx) {
       return ctx.store.transaction(async (store) => {
-        if ((await store.get("workbooks", a.book)) !== null) throw new Error(`workbook "${a.book}" exists`);
+        if ((await store.get("workbooks", a.book)) !== null) throw new OpError(`workbook "${a.book}" exists`, 409);
         const wb = new Workbook();
         wb.addSheet(a.sheet ?? "Sheet1");
-        await store.put("workbooks", a.book, { name: a.book, state: Buffer.from(wb.encode()).toString("base64"), updatedAt: new Date().toISOString() });
+        await store.put("workbooks", a.book, { name: a.book, state: toBase64(wb.encode()), updatedAt: new Date().toISOString() });
         return { book: a.book, sheets: wb.sheetNames() };
       });
     },

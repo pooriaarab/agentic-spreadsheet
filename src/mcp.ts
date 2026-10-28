@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { ctxFromEnv, message, OPS, type Ctx } from "./ops.js";
+import { ctxFromEnv } from "./env.js";
+import { message, OPS, type Ctx } from "./ops.js";
 import { VERSION } from "./version.js";
 
 const text = (value: unknown) => [{ type: "text" as const, text: JSON.stringify(value) }];

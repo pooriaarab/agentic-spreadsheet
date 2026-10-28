@@ -8,7 +8,11 @@
 Spreadsheets with formulas that people and agents edit together.
 
 > Status: early. The workbook model, formula engine, CLI, and MCP server work. It is not on npm yet.
-> The HTTP API is planned.
+> The HTTP API is a stopgap with in-memory storage.
+>
+> Warning: the HTTP API (the Worker) refuses to serve until you set `SHEETS_API_KEYS`, or set
+> `SHEETS_UNSAFE_TRUST_HEADERS=1`. That second setting trusts any caller who sets two headers.
+> Use it for tests only. See [HTTP API](#http-api).
 >
 > Warning: the CLI and the MCP server do not check who calls them. `--as` and `--kind` are claims
 > that label each edit. Do not give either one to a caller you do not trust.
@@ -49,6 +53,31 @@ kind. An agent sets `agent`, `agent_of_human`, or `agent_of_agent`. A read needs
 `import` takes `--as-text`: a cell that starts with `=` stays text. Use it for CSV you do not trust.
 `export` and `import` handle sheets of 150,000 rows and more. Export puts a `'` before text that
 starts with `+ - @` or a control character, and import removes it, so a round trip keeps the text.
+
+## HTTP API
+
+The Worker serves the same operations under `/api/v1/sheets`. Run it with `npx wrangler dev`.
+
+```sh
+# one key, at least 32 bytes, tied to one id and kind
+npx wrangler dev --var 'SHEETS_API_KEYS:{"<your-key>":{"id":"bot-1","kind":"agent"}}'
+curl -H "authorization: Bearer <your-key>" -X POST localhost:8787/api/v1/sheets -d '{"book":"budget"}'
+curl -H "authorization: Bearer <your-key>" -X PUT localhost:8787/api/v1/sheets/budget/range \
+  -d '{"anchor":"A1","values":[[10,20,"=A1+B1"]]}'
+curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/range?range=A1:C1'
+```
+
+| Method and path | Operation |
+|---|---|
+| `GET /` and `POST /` | `list` and `new` |
+| `GET /:book/range` and `PUT /:book/range` | `read` and `write` |
+| `PUT /:book/formula` | `formula` |
+| `POST /:book/rows` | `insert-rows` |
+| `GET /:book/export` and `POST /:book/import` | `export` (CSV) and `import` |
+
+The key sets who writes, so a body cannot name another principal. A key must have 32 bytes or more,
+and each needs an id and a kind. A missing or bad key gets 401. Errors are 400, 404, 409, or 413.
+A request body is at most 5 MB. `GET /health` needs no key.
 
 ## Features
 
@@ -92,7 +121,10 @@ starts with `+ - @` or a control character, and import removes it, so a round tr
   A value write that races an insert lands at the old address, and nothing flags it.
 - Two clients that add a sheet with the same name while offline both succeed.
   The merged workbook then holds two sheets with one name.
-- Storage is local JSON files behind a `Store` interface. A write takes a lock file in the store
+- The Worker keeps workbooks in memory, in one isolate. A restart loses them, and two isolates do not
+  share them. Any caller with a valid key can read and write every workbook. There is no sharing,
+  no rate limit, and no audit log yet. The shared identity package is meant to replace this.
+- Storage for the CLI is local JSON files behind a `Store` interface. A write takes a lock file in the store
   directory, so processes and parallel calls take turns. A lock from a dead process is taken over.
   XLSX and ODS import and export, and the HTTP API, are not built yet.
 

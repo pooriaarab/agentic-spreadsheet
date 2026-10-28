@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
-import { FileStore } from "./store.js";
+import { FileStore } from "./file-store.js";
 
 // Failure modes, listed before the code:
 // - two stores on one directory both read the same counter and one increment is lost
