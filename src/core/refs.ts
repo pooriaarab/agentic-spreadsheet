@@ -73,7 +73,7 @@ interface Flags {
   isRange: boolean;
 }
 
-function readRef(formula: string, at: number, home: string): { text: string; ref: FoundRef; flags: Flags } | null {
+export function readRef(formula: string, at: number, home: string): { text: string; ref: FoundRef; flags: Flags } | null {
   REF.lastIndex = at;
   const m = REF.exec(formula);
   if (m === null) return null;
