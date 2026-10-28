@@ -3,7 +3,7 @@ import { colLetters, MAX_ROW, parseRange } from "./core/a1.js";
 import { Engine } from "./core/engine.js";
 import { formatCsv, inferCell, parseCsv } from "./core/csv.js";
 import { FileStore, type Store } from "./core/store.js";
-import { MAX_STRUCTURE_COUNT, PRINCIPAL_KINDS, Workbook, type Principal, type PrincipalKind } from "./core/workbook.js";
+import { MAX_STRUCTURE_COUNT, PRINCIPAL_KINDS, SheetError, Workbook, type Principal, type PrincipalKind } from "./core/workbook.js";
 
 // One list of operations serves the CLI and the MCP server.
 
@@ -73,7 +73,10 @@ function edit<T>(ctx: Ctx, id: string, change: (wb: Workbook) => T): Promise<T> 
 }
 
 const first = (wb: Workbook, name?: string) => name ?? wb.sheetNames()[0];
-const EXPORT_ROWS = 5_000;
+// Export reads the sheet in blocks of this many cells. It refuses a sheet whose extent is larger
+// than the total cap, because the CSV holds every cell from A1 to the last used one.
+const EXPORT_BLOCK_CELLS = 100_000;
+const MAX_EXPORT_CELLS = 1_000_000;
 export const OPS: Op[] = [
   {
     name: "new", description: "Create a workbook with one empty sheet.", args: ["book"],
@@ -153,12 +156,16 @@ export const OPS: Op[] = [
       const name = first(wb, a.sheet);
       const extent = wb.extent(name);
       if (extent === null) return { csv: "" };
-      // Read the sheet in blocks of rows, so a large sheet never builds one giant grid.
       const { c2, r2 } = parseRange(extent);
+      if (c2 * r2 > MAX_EXPORT_CELLS) {
+        throw new SheetError(`sheet ${name} spans ${extent}, which is too large to export (limit ${MAX_EXPORT_CELLS} cells)`);
+      }
+      // Read the sheet in blocks sized by cells, so a wide sheet never builds one giant grid.
+      const rowsPerBlock = Math.max(1, Math.floor(EXPORT_BLOCK_CELLS / c2));
       const engine = new Engine(wb);
       const parts: string[] = [];
-      for (let row = 1; row <= r2; row += EXPORT_ROWS) {
-        parts.push(formatCsv(engine.values(name, `A${row}:${colLetters(c2)}${Math.min(row + EXPORT_ROWS - 1, r2)}`)));
+      for (let row = 1; row <= r2; row += rowsPerBlock) {
+        parts.push(formatCsv(engine.values(name, `A${row}:${colLetters(c2)}${Math.min(row + rowsPerBlock - 1, r2)}`)));
       }
       return { csv: parts.join("") };
     },

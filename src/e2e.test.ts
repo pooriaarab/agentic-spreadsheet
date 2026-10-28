@@ -24,6 +24,7 @@ import { afterEach, beforeEach, describe, expect, test } from "vitest";
 // - one deep formula makes read or export fail for the whole range
 // - text that starts with + - @ gains an apostrophe on every round trip; a BOM stays in A1;
 //   a 20-digit id loses digits; --as-text still runs a leading = as a formula
+// - two far-apart cells (A1 and XFD1048576) make export build an 82-million-cell grid
 // - list restarts at page 1 on a bad cursor
 
 const CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
@@ -137,6 +138,26 @@ describe("shared files", () => {
     expect(cli("import", "b", "--file", file).code).toBe(0);
     const lines = cli("export", "b").out.split("\r\n");
     expect([lines.length, lines[0], lines[149_999]]).toEqual([150_001, "1,row 1", "150000,row 150000"]);
+  });
+});
+
+describe("sparse and wide sheets", () => {
+  test("export refuses a sheet whose extent is too large, fast, and still serves a wide small one", { timeout: 20_000 }, () => {
+    cli("new", "b");
+    cli("write", "b", "A1", "[[1]]");
+    cli("write", "b", "XFD1048576", "[[2]]");
+    const started = Date.now();
+    const r = cli("export", "b");
+    expect([r.code, r.out]).toEqual([1, ""]);
+    expect(r.err).toMatch(/^error: .*too large to export/);
+    expect(r.err).not.toMatch(/\n\s+at /);
+    expect(Date.now() - started).toBeLessThan(10_000);
+
+    cli("new", "w");
+    cli("write", "w", "A1", "[[1]]");
+    cli("write", "w", "XFD3", "[[2]]");
+    const lines = cli("export", "w").out.split("\r\n");
+    expect([lines.length, lines[0].split(",").length, lines[2].endsWith(",2")]).toEqual([4, 16_384, true]);
   });
 });
 
