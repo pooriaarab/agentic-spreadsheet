@@ -4,7 +4,7 @@ import { rewriteRefs, sameSheet, shiftSpan, type RefEdit } from "./refs.js";
 
 export type PrincipalKind = "human" | "agent_of_human" | "agent_of_agent" | "agent" | "user_token";
 
-const PRINCIPAL_KINDS: readonly PrincipalKind[] = ["human", "agent_of_human", "agent_of_agent", "agent", "user_token"];
+export const PRINCIPAL_KINDS: readonly PrincipalKind[] = ["human", "agent_of_human", "agent_of_agent", "agent", "user_token"];
 
 // The principal that makes an edit. The kind stays on every cell it writes.
 export interface Principal {
@@ -63,7 +63,7 @@ export class SheetError extends Error {
 
 const MAX_RANGE_CELLS = 1_000_000;
 const MAX_FORMAT_CELLS = 100_000;
-const MAX_STRUCTURE_COUNT = 10_000;
+export const MAX_STRUCTURE_COUNT = 10_000;
 export const MAX_TEXT = 32_767;
 const MAX_FORMULA = 8_192;
 const BAD_SHEET_NAME = /[[\]:*?/\\!']/;
@@ -185,6 +185,17 @@ export class Workbook {
 
   cellCount(name: string): number {
     return usedAddresses(this.cells(this.find(name))).size;
+  }
+
+  // The range from A1 to the last used cell, or null for an empty sheet.
+  extent(name: string): string | null {
+    const last = { col: 0, row: 0 };
+    for (const addr of usedAddresses(this.cells(this.find(name)))) {
+      const at = parseCell(addr);
+      last.col = Math.max(last.col, at.col);
+      last.row = Math.max(last.row, at.row);
+    }
+    return last.col === 0 ? null : `A1:${formatCell(last)}`;
   }
 
   setFrozenRows(name: string, rows: number): void {
