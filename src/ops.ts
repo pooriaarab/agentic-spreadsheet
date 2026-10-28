@@ -4,7 +4,7 @@ import { Engine } from "./core/engine.js";
 import { formatCsv, inferCell, parseCsv } from "./core/csv.js";
 import { fromBase64, toBase64 } from "./core/bytes.js";
 import type { Store } from "./core/store.js";
-import { MAX_STRUCTURE_COUNT, SheetError, Workbook, type Principal } from "./core/workbook.js";
+import { MAX_STRUCTURE_COUNT, Workbook, type Principal } from "./core/workbook.js";
 
 // One list of operations serves the CLI and the MCP server.
 
@@ -12,13 +12,15 @@ export interface Ctx {
   store: Store;
   // Who is writing. It throws when the caller did not say, so no edit gets a default label.
   principal(): Principal;
+  // The most cells one write or import may carry. The CLI sets none. The Worker sets a cap.
+  maxWriteCells?: number;
 }
 
 // An error with an HTTP-style status, so the Worker can answer 404 or 409 and not a blanket 400.
 export class OpError extends Error {
   constructor(
     message: string,
-    readonly status: 404 | 409,
+    readonly status: 404 | 409 | 413,
   ) {
     super(message);
   }
@@ -69,6 +71,13 @@ function edit<T>(ctx: Ctx, id: string, change: (wb: Workbook) => T): Promise<T> 
   });
 }
 
+function checkWriteSize(ctx: Ctx, rows: unknown[][]): void {
+  const cells = rows.reduce<number>((sum, row) => sum + row.length, 0);
+  if (ctx.maxWriteCells !== undefined && cells > ctx.maxWriteCells) {
+    throw new OpError(`a write of ${cells.toLocaleString("en-US")} cells is too large (limit ${ctx.maxWriteCells.toLocaleString("en-US")} cells)`, 413);
+  }
+}
+
 const first = (wb: Workbook, name?: string) => name ?? wb.sheetNames()[0];
 // Export reads the sheet in blocks of this many cells. It refuses a sheet whose extent is larger
 // than the total cap, because the CSV holds every cell from A1 to the last used one.
@@ -114,6 +123,7 @@ export const OPS: Op[] = [
     shape: { book, anchor: z.string().describe("Top-left cell, such as A1."), values: grid, sheet },
     async run(a: { book: string; anchor: string; values: (string | number | boolean | null)[][]; sheet?: string }, ctx) {
       const who = ctx.principal();
+      checkWriteSize(ctx, a.values);
       await edit(ctx, a.book, (wb) => wb.writeRange(first(wb, a.sheet), a.anchor, a.values, who));
       return { ok: true, rows: a.values.length };
     },
@@ -155,7 +165,7 @@ export const OPS: Op[] = [
       if (extent === null) return { csv: "" };
       const { c2, r2 } = parseRange(extent);
       if (c2 * r2 > MAX_EXPORT_CELLS) {
-        throw new SheetError(`sheet ${name} spans ${extent}, which is too large to export (limit ${MAX_EXPORT_CELLS} cells)`);
+        throw new OpError(`sheet ${name} spans ${extent}, which is too large to export (limit ${MAX_EXPORT_CELLS.toLocaleString("en-US")} cells)`, 413);
       }
       // Read the sheet in blocks sized by cells, so a wide sheet never builds one giant grid.
       const rowsPerBlock = Math.max(1, Math.floor(EXPORT_BLOCK_CELLS / c2));
@@ -178,6 +188,7 @@ export const OPS: Op[] = [
     async run(a: { book: string; csv: string; asText: boolean; sheet?: string }, ctx) {
       const who = ctx.principal();
       const rows = parseCsv(a.csv).map((row) => row.map((text) => inferCell(text, a.asText)));
+      checkWriteSize(ctx, rows);
       await edit(ctx, a.book, (wb) => wb.writeRange(first(wb, a.sheet), "A1", rows, who));
       return { ok: true, rows: rows.length };
     },

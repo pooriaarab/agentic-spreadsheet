@@ -17,6 +17,9 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 // - an unknown book is not 404, a second `new` is not 409, bad JSON or an unknown field is not 400,
 //   a 6 MB body is not 413, a count of 2,000,000 is not 400
 // - one deep formula turns a read into a 500
+// - one 5 MB write of about 2 million cells, or a 10,001-cell write or import, is accepted
+// - a formula over ten 1,000,000-cell ranges is computed in full
+// - two far-apart cells (A1 and XFD1048576) make export build a huge grid, or kill the Worker
 // - export is not CSV, or a response can be cached
 // - /health reports a version other than package.json
 
@@ -178,6 +181,34 @@ describe("bearer keys", () => {
     expect([csv.status, csv.headers.get("content-type"), csv.text]).toEqual([200, "text/csv; charset=utf-8", `1,#DEPTH!,"a,b",'+cmd\r\n`]);
     expect((await call("keys", "POST", `${API}/d/import`, { ...as(KEY_A), body: { csv: "=1+1,x\n" } })).status).toBe(200);
     expect((await call("keys", "GET", `${API}/d/range?range=A1:B1`, as(KEY_A))).json().values).toEqual([[2, "x"]]);
+  });
+
+  test("a write or import over 10,000 cells is 413, and the Worker keeps serving", { timeout: 60_000 }, async () => {
+    await call("keys", "POST", API, { ...as(KEY_A), body: { book: "cap" } });
+    const put = (cells: number) => call("keys", "PUT", `${API}/cap/range`, { ...as(KEY_A), body: { anchor: "A1", values: [Array(cells).fill(1)] } });
+    expect((await put(10_000)).status).toBe(200);
+    const over = await put(10_001);
+    expect([over.status, over.json().error]).toEqual([413, expect.stringMatching(/10,000 cells/)]);
+    // About 2 million cells in a 4 MB body. It used to need more memory than the Worker has.
+    const big = await call("keys", "PUT", `${API}/cap/range`, { ...as(KEY_A), raw: `{"anchor":"A1","values":[${Array(122).fill(`[${Array(16_384).fill(1).join(",")}]`).join(",")}]}` });
+    expect(big.status).toBe(413);
+    const csv = Array.from({ length: 101 }, () => Array(100).fill(1).join(",")).join("\n");
+    expect((await call("keys", "POST", `${API}/cap/import`, { ...as(KEY_A), body: { csv } })).status).toBe(413);
+    expect((await call("keys", "GET", "/health")).status).toBe(200);
+    expect((await call("keys", "GET", `${API}/cap/range?range=A1:B1`, as(KEY_A))).json().values).toEqual([[1, 1]]);
+  });
+
+  test("a formula over ten 1,000,000-cell ranges is one #VALUE! cell, and export of a sparse wide sheet is 413", { timeout: 60_000 }, async () => {
+    await call("keys", "POST", API, { ...as(KEY_A), body: { book: "work" } });
+    const ranges = "ABCDEFGHIJ".split("").map((c) => `${c}1:${c}1000000`).join(",");
+    await call("keys", "PUT", `${API}/work/formula`, { ...as(KEY_A), body: { cell: "L1", formula: `=SUM(${ranges})` } });
+    expect((await call("keys", "GET", `${API}/work/range?range=L1`, as(KEY_A))).json().values).toEqual([[{ error: "#VALUE!" }]]);
+    await call("keys", "PUT", `${API}/work/range`, { ...as(KEY_A), body: { anchor: "XFD1048576", values: [[2]] } });
+    const started = Date.now();
+    const res = await call("keys", "GET", `${API}/work/export`, as(KEY_A));
+    expect([res.status, res.json().error]).toEqual([413, expect.stringMatching(/too large to export/)]);
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect((await call("keys", "GET", "/health")).status).toBe(200);
   });
 
   test("/health needs no key and reports the package version", async () => {

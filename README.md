@@ -126,7 +126,9 @@ A request body is at most 5 MB. `GET /health` needs no key.
   no rate limit, and no audit log yet. The shared identity package is meant to replace this.
 - Storage for the CLI is local JSON files behind a `Store` interface. A write takes a lock file in the store
   directory, so processes and parallel calls take turns. A lock from a dead process is taken over.
-  XLSX and ODS import and export, and the HTTP API, are not built yet.
+  XLSX and ODS import and export are not built yet.
+- CSV export refuses a sheet whose extent passes 1,000,000 cells. The HTTP API refuses a write or import of
+  more than 10,000 cells (413). A formula may read at most 1,000,000 range cells.
 
 ## License
 

@@ -12,6 +12,8 @@ export interface WorkerEnv extends AuthEnv {
 }
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
+// One request may write this many cells. A cell costs memory in the isolate, which all callers share.
+const MAX_WRITE_CELLS = 10_000;
 
 // Each route runs one operation, the same one the CLI and the MCP server run.
 // The path gives `book`. The query string and the JSON body give the rest.
@@ -59,7 +61,7 @@ export function createApp({ store, authenticate, pack = "agentic-spreadsheet" }:
       }
       const parsed = z.object(op.shape).strict().safeParse({ ...c.req.query(), ...(body as object), ...c.req.param() });
       if (!parsed.success) return c.json({ error: message(parsed.error) }, 400);
-      const result = await op.run(parsed.data, { store, principal: () => c.get("who") });
+      const result = await op.run(parsed.data, { store, principal: () => c.get("who"), maxWriteCells: MAX_WRITE_CELLS });
       if (name === "export") return c.body((result as { csv: string }).csv, 200, { "content-type": "text/csv; charset=utf-8" });
       return c.json(result as object, name === "new" ? 201 : 200);
     });
