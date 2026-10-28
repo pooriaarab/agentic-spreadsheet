@@ -30,9 +30,12 @@ console.log(wb.readRange("Sheet1", "A1:A4"));
 
 ## Features
 
-- A workbook is one Yjs document. Two copies merge without conflict.
+- A workbook is one Yjs document. Two copies merge. Content, each format field, and the editor stamp
+  of a cell are separate keys, so two writers on one new cell keep both edits.
+  If two writers set the same field, the later write wins.
 - Many sheets in a set order.
 - Sparse cells keyed by A1 coordinates. Each cell holds a value or a formula, plus a format.
+  Text is at most 32,767 characters. A formula is at most 8,192.
 - Column widths and frozen rows.
 - Read a range. Write a range of values or formulas.
 - Every cell keeps the principal that last edited it. The kind is one of
@@ -43,6 +46,8 @@ console.log(wb.readRange("Sheet1", "A1:A4"));
 
 - Formulas are stored as text. Nothing evaluates them yet.
 - There is no storage, CLI, MCP server, or HTTP API yet.
+- Two clients that add a sheet with the same name while offline both succeed.
+  The merged workbook then holds two sheets with one name.
 
 ## License
 

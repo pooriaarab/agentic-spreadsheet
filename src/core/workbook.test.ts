@@ -10,6 +10,11 @@ import { Workbook, type Principal } from "./workbook.js";
 // - duplicate sheet names (any case) or names with banned characters pass
 // - a bad frozen-row count or column width passes
 // - concurrent writes to different cells lose one, or encoded state does not round-trip
+// - two writers touch the same NEW cell (value and format, or two format fields) and one loses
+// - a grid of 150,000 rows throws RangeError, or a write takes a number past the cell text limit
+// - NaN, Infinity, an object, or an array is stored as a value; a format patch takes unknown keys,
+//   a bad color, or a bad alignment; a format write covers more than 100,000 cells
+// - clearing the content and the last format field leaves a key behind
 
 const human: Principal = { id: "u1", kind: "human" };
 const agent: Principal = { id: "a1", kind: "agent_of_human" };
@@ -99,5 +104,77 @@ describe("sync", () => {
       expect(w.readRange("Sheet1", "A1:B1")[0].map((c) => c.value)).toEqual([1, 2]);
     }
     expect(copy.readRange("Sheet1", "B1")[0][0].author?.machine).toBe(true);
+  });
+
+  // Two copies start from the same state, edit offline, then swap updates.
+  function fork(): [Workbook, Workbook] {
+    const a = book();
+    return [a, Workbook.fromState(a.encode())];
+  }
+  function merge(a: Workbook, b: Workbook): void {
+    Y.applyUpdate(a.doc, Y.encodeStateAsUpdate(b.doc));
+    Y.applyUpdate(b.doc, Y.encodeStateAsUpdate(a.doc));
+  }
+
+  test("a value and a format on the same new cell both survive", () => {
+    const [a, b] = fork();
+    a.writeRange("Sheet1", "A1", [[5]], human);
+    b.setFormat("Sheet1", "A1", { bold: true }, agent);
+    merge(a, b);
+    for (const w of [a, b]) expect(w.readRange("Sheet1", "A1")[0][0]).toMatchObject({ value: 5, format: { bold: true } });
+  });
+
+  test("two format fields on the same new cell both survive", () => {
+    const [a, b] = fork();
+    a.setFormat("Sheet1", "A1", { bold: true }, human);
+    b.setFormat("Sheet1", "A1", { color: "#ff0000" }, agent);
+    merge(a, b);
+    for (const w of [a, b]) expect(w.readRange("Sheet1", "A1")[0][0].format).toEqual({ bold: true, color: "#ff0000" });
+  });
+
+  test("a value and a formula written at once leave one winner, never both", () => {
+    const [a, b] = fork();
+    a.writeRange("Sheet1", "A1", [[5]], human);
+    b.writeRange("Sheet1", "A1", [["=1+1"]], agent);
+    merge(a, b);
+    const [x, y] = [a, b].map((w) => w.readRange("Sheet1", "A1")[0][0]);
+    expect(x).toEqual(y);
+    expect([x.value, x.formula].filter((v) => v !== null)).toHaveLength(1);
+  });
+});
+
+describe("limits and input checks", () => {
+  test("a 150,000-row grid writes without a RangeError", () => {
+    const wb = book();
+    wb.writeRange("Sheet1", "A1", Array.from({ length: 150_000 }, (_, i) => [i + 1]), human);
+    expect(wb.cellCount("Sheet1")).toBe(150_000);
+    expect(wb.readRange("Sheet1", "A150000")[0][0].value).toBe(150_000);
+  });
+
+  test.each([[Number.NaN], [Infinity], [{ a: 1 }], [[1]], ["x".repeat(32_768)], [`=${"1+".repeat(5_000)}1`]])(
+    "a bad value %j throws",
+    (value) => {
+      expect(() => book().writeRange("Sheet1", "A1", [[value as never]], human)).toThrow(/value|text|formula/);
+    },
+  );
+
+  test.each([
+    [{ weight: true }, /format/], [{ color: "red; x" }, /color/], [{ background: "#12" }, /color/],
+    [{ align: "middle" }, /align/], [{ bold: "yes" }, /bold/], [{ numberFormat: 5 }, /numberFormat/],
+  ])("format patch %j throws", (patch, message) => {
+    expect(() => book().setFormat("Sheet1", "A1", patch as never, human)).toThrow(message);
+  });
+
+  test("a format write over 100,000 cells throws", () => {
+    expect(() => book().setFormat("Sheet1", "A1:Z4001", { bold: true }, human)).toThrow(/too large/);
+  });
+
+  test("clearing the content and the last format field leaves no key", () => {
+    const wb = book();
+    wb.writeRange("Sheet1", "A1", [[1]], human);
+    wb.setFormat("Sheet1", "A1", { bold: true, align: "left" }, human);
+    wb.setFormat("Sheet1", "A1", { bold: null, align: null }, human);
+    wb.writeRange("Sheet1", "A1", [[null]], human);
+    expect(wb.cellCount("Sheet1")).toBe(0);
   });
 });

@@ -58,10 +58,18 @@ export class SheetError extends Error {
 }
 
 const MAX_RANGE_CELLS = 1_000_000;
+const MAX_FORMAT_CELLS = 100_000;
+const MAX_TEXT = 32_767;
+const MAX_FORMULA = 8_192;
 const BAD_SHEET_NAME = /[[\]:*?/\\!']/;
+const FORMAT_FIELDS = ["numberFormat", "bold", "italic", "align", "color", "background"] as const;
+const COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
-type YCell = Y.Map<unknown>;
 type YSheet = Y.Map<unknown>;
+// One flat map per sheet. A cell is a few keys: `A1:c` (content), `A1:by` (the last
+// editor), and `A1:fmt.<field>`. Flat keys let two writers who touch one new cell merge.
+type Cells = Y.Map<unknown>;
+type Stamp = Principal & { at: string };
 
 function sameSheet(a: string, b: string): boolean {
   return a.toLowerCase() === b.toLowerCase();
@@ -110,7 +118,7 @@ export class Workbook {
   }
 
   cellCount(name: string): number {
-    return this.cells(this.find(name)).size;
+    return usedAddresses(this.cells(this.find(name))).size;
   }
 
   setFrozenRows(name: string, rows: number): void {
@@ -130,7 +138,7 @@ export class Workbook {
     const span = this.span(range);
     return Array.from({ length: span.r2 - span.r1 + 1 }, (_, dr) =>
       Array.from({ length: span.c2 - span.c1 + 1 }, (_, dc) =>
-        toCell(cells.get(formatCell({ col: span.c1 + dc, row: span.r1 + dr }))),
+        toCell(cells, formatCell({ col: span.c1 + dc, row: span.r1 + dr })),
       ),
     );
   }
@@ -139,7 +147,11 @@ export class Workbook {
   writeRange(name: string, anchor: string, rows: CellInput[][], by: Principal): void {
     const cells = this.cells(this.find(name));
     const start = parseCell(anchor);
-    const width = Math.max(0, ...rows.map((line) => line.length));
+    let width = 0;
+    for (const line of rows) {
+      width = Math.max(width, line.length);
+      for (const value of line) checkValue(value);
+    }
     if (start.row + rows.length - 1 > MAX_ROW || start.col + width - 1 > MAX_COL) {
       throw new SheetError(`write at ${anchor} runs past the grid`);
     }
@@ -153,17 +165,18 @@ export class Workbook {
 
   setFormat(name: string, range: string, patch: CellFormatPatch, by: Principal): void {
     const cells = this.cells(this.find(name));
-    const span = this.span(range);
+    const span = this.span(range, MAX_FORMAT_CELLS);
+    checkPatch(patch);
     checkPrincipal(by);
     this.doc.transact(() => {
       for (let row = span.r1; row <= span.r2; row += 1) {
         for (let col = span.c1; col <= span.c2; col += 1) {
-          const key = formatCell({ col, row });
-          const cell = (cells.get(key) as YCell | undefined) ?? (cells.set(key, new Y.Map()) as YCell);
-          const format: Record<string, unknown> = { ...(cell.get("fmt") as object | undefined), ...patch };
-          for (const [field, value] of Object.entries(format)) if (value === null) delete format[field];
-          cell.set("fmt", format);
-          stamp(cell, by);
+          const addr = formatCell({ col, row });
+          for (const [field, value] of Object.entries(patch)) {
+            if (value === null) cells.delete(`${addr}:fmt.${field}`);
+            else if (value !== undefined) cells.set(`${addr}:fmt.${field}`, value);
+          }
+          tidy(cells, addr, by);
         }
       }
     });
@@ -175,8 +188,8 @@ export class Workbook {
     return sheet;
   }
 
-  private cells(sheet: YSheet): Y.Map<YCell> {
-    return sheet.get("cells") as Y.Map<YCell>;
+  private cells(sheet: YSheet): Cells {
+    return sheet.get("cells") as Cells;
   }
 
   private checkName(name: string): void {
@@ -186,9 +199,9 @@ export class Workbook {
     }
   }
 
-  private span(range: string): RangePos {
+  private span(range: string, max = MAX_RANGE_CELLS): RangePos {
     const span = parseRange(range);
-    if ((span.c2 - span.c1 + 1) * (span.r2 - span.r1 + 1) > MAX_RANGE_CELLS) {
+    if ((span.c2 - span.c1 + 1) * (span.r2 - span.r1 + 1) > max) {
       throw new SheetError(`range ${range} is too large`);
     }
     return span;
@@ -199,42 +212,73 @@ function checkPrincipal(by: Principal): void {
   if (by.id === "" || !PRINCIPAL_KINDS.includes(by.kind)) throw new SheetError("invalid principal");
 }
 
-function stamp(cell: YCell, by: Principal): void {
-  cell.set("by", { id: by.id, kind: by.kind });
-  cell.set("at", new Date().toISOString());
+const isFormula = (v: unknown): v is string => typeof v === "string" && v.startsWith("=") && v.length > 1;
+
+function checkValue(value: unknown): void {
+  if (value === null || typeof value === "boolean") return;
+  if (typeof value === "number" && Number.isFinite(value)) return;
+  if (typeof value !== "string") throw new SheetError("invalid cell value");
+  if (isFormula(value) && value.length > MAX_FORMULA) throw new SheetError(`formula longer than ${MAX_FORMULA} characters`);
+  if (value.length > MAX_TEXT) throw new SheetError(`text longer than ${MAX_TEXT} characters`);
 }
 
-function putValue(cells: Y.Map<YCell>, key: string, value: CellInput, by: Principal): void {
-  const existing = cells.get(key);
+function checkPatch(patch: CellFormatPatch): void {
+  for (const [field, value] of Object.entries(patch)) {
+    if (!(FORMAT_FIELDS as readonly string[]).includes(field)) throw new SheetError(`unknown format field "${field}"`);
+    if (value === null || value === undefined) continue;
+    const ok =
+      field === "numberFormat" ? typeof value === "string" && value.length > 0 && value.length <= 100
+      : field === "align" ? value === "left" || value === "center" || value === "right"
+      : field === "bold" || field === "italic" ? typeof value === "boolean"
+      : typeof value === "string" && COLOR.test(value);
+    if (!ok) throw new SheetError(`invalid ${field === "color" || field === "background" ? `${field} color` : field}`);
+  }
+}
+
+// The distinct cell addresses that hold any key.
+function usedAddresses(cells: Cells): Set<string> {
+  const used = new Set<string>();
+  for (const key of cells.keys()) used.add(key.slice(0, key.indexOf(":")));
+  return used;
+}
+
+function stamp(cells: Cells, addr: string, by: Principal): void {
+  cells.set(`${addr}:by`, { id: by.id, kind: by.kind, at: new Date().toISOString() });
+}
+
+// Keep the editor stamp while the cell holds content or a format. Drop it when the cell is empty.
+function tidy(cells: Cells, addr: string, by: Principal): void {
+  const used = cells.has(`${addr}:c`) || FORMAT_FIELDS.some((field) => cells.has(`${addr}:fmt.${field}`));
+  if (used) stamp(cells, addr, by);
+  else cells.delete(`${addr}:by`);
+}
+
+function putValue(cells: Cells, addr: string, value: CellInput, by: Principal): void {
   if (value === null || value === "") {
-    if (existing === undefined) return;
-    if (!existing.has("fmt")) {
-      cells.delete(key);
-      return;
-    }
-    existing.delete("v");
-    existing.delete("f");
-    stamp(existing, by);
+    if (cells.has(`${addr}:c`)) cells.delete(`${addr}:c`);
+    else if (!cells.has(`${addr}:by`)) return;
+    tidy(cells, addr, by);
     return;
   }
-  const cell = existing ?? (cells.set(key, new Y.Map()) as YCell);
-  if (typeof value === "string" && value.startsWith("=") && value.length > 1) {
-    cell.set("f", value);
-    cell.delete("v");
-  } else {
-    cell.set("v", value);
-    cell.delete("f");
-  }
-  stamp(cell, by);
+  cells.set(`${addr}:c`, value);
+  stamp(cells, addr, by);
 }
 
-function toCell(cell: YCell | undefined): Cell {
-  if (cell === undefined) return { value: null, formula: null, format: {}, author: null };
-  const by = cell.get("by") as Principal | undefined;
+function toCell(cells: Cells, addr: string): Cell {
+  const by = cells.get(`${addr}:by`) as Stamp | undefined;
+  if (by === undefined) return { value: null, formula: null, format: {}, author: null };
+  const content = cells.get(`${addr}:c`);
+  const valid = typeof content === "string" || typeof content === "boolean" || (typeof content === "number" && Number.isFinite(content));
+  const format: Record<string, unknown> = {};
+  for (const field of FORMAT_FIELDS) {
+    const value = cells.get(`${addr}:fmt.${field}`);
+    if (value !== undefined) format[field] = value;
+  }
+  const formula = valid && isFormula(content) ? content : null;
   return {
-    value: (cell.get("v") as CellValue | undefined) ?? null,
-    formula: (cell.get("f") as string | undefined) ?? null,
-    format: { ...(cell.get("fmt") as CellFormat | undefined) },
-    author: by === undefined ? null : { ...by, machine: isMachineMade(by.kind), at: cell.get("at") as string },
+    value: valid && formula === null ? (content as CellValue) : null,
+    formula,
+    format: format as CellFormat,
+    author: { id: by.id, kind: by.kind, machine: isMachineMade(by.kind), at: by.at },
   };
 }
