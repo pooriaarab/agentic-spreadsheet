@@ -9,6 +9,8 @@ import type { SheetsClient } from "../src/client.js";
 window.matchMedia = ((query: string) => ({ matches: false, media: query, addEventListener() {}, removeEventListener() {} })) as unknown as typeof window.matchMedia;
 
 const built = existsSync("dist/embed.js");
+// A build is missing only on a bare `npm test`. CI builds first, and `CI` makes a missing build a failure.
+if (!built && process.env.CI) throw new Error("dist/embed.js is missing: run npm run build first");
 
 describe.skipIf(!built)("dist/embed.js and dist/embed.css", () => {
   it("renders a sheet when a host calls mount", async () => {
@@ -36,8 +38,10 @@ describe.skipIf(!built)("dist/embed.js and dist/embed.css", () => {
     expect(css).toContain("@font-face");
     // No rule that targets the whole page: bare `*`, `html`, `body`, or a bare heading, link, or paragraph.
     const selectors = [...css.matchAll(/(?:^|})\s*([^{}@]+)\{/g)].flatMap((m) => m[1].split(",").map((x) => x.trim()));
-    const page = selectors.filter((x) => /^(\*|html|body|h[1-6]|p|a|:focus-visible|::selection|:root\s*)$/.test(x) && x !== ":root");
+    const page = selectors.filter((x) => /^(\*|html|body|h[1-6]|p|a|code|kbd|pre|:focus-visible|::selection|\*::before|\*::after)$/.test(x));
     expect(selectors.length).toBeGreaterThan(100);
     expect(page).toEqual([]);
+    // Dialogs and toasts render outside the sheet, so they carry their own color and box model.
+    for (const portal of [".ad-dialog", ".ad-toast-viewport", ".ad-tooltip"]) expect(selectors).toContain(portal);
   });
 });

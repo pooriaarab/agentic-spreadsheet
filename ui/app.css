@@ -1,10 +1,17 @@
 @import "agentic-design/styles.css";
 .as-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
-.as-sheet, .as-sheet *, .as-sheet *::before, .as-sheet *::after { box-sizing: border-box; }
-.as-sheet { font-family: var(--ad-font-family-sans); font-size: var(--ad-font-size-sm); line-height: var(--ad-line-height-normal); color: var(--ad-color-text); }
+/* Dialogs, toasts, and tooltips render in a portal in <body>, outside .as-sheet. They get the same base. */
+.as-sheet, .as-sheet *, .as-sheet *::before, .as-sheet *::after,
+.ad-dialog, .ad-dialog *, .ad-dialog *::before, .ad-dialog *::after,
+.ad-toast-viewport, .ad-toast-viewport *, .ad-toast-viewport *::before, .ad-toast-viewport *::after,
+.ad-tooltip, .ad-tooltip *, .ad-tooltip *::before, .ad-tooltip *::after { box-sizing: border-box; }
+.as-sheet, .ad-dialog, .ad-toast-viewport, .ad-tooltip { font-family: var(--ad-font-family-sans); font-size: var(--ad-font-size-sm); line-height: var(--ad-line-height-normal); color: var(--ad-color-text); }
+.ad-dialog p, .ad-toast p { margin: 0; }
+.ad-dialog h1, .ad-dialog h2, .ad-dialog h3, .ad-toast h1, .ad-toast h2, .ad-toast h3 { margin: 0; font-size: var(--ad-font-size-lg); font-weight: var(--ad-font-weight-semibold); }
+.ad-dialog :focus-visible, .ad-toast-viewport :focus-visible { outline: 2px solid var(--ad-color-focus); outline-offset: 2px; }
 .as-sheet p { margin: 0; }
 .as-sheet :focus-visible { outline: 2px solid var(--ad-color-focus); outline-offset: 2px; }
-@media (prefers-reduced-motion: reduce) { .as-sheet *, .as-sheet *::before, .as-sheet *::after { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
+@media (prefers-reduced-motion: reduce) { .as-sheet *, .as-sheet *::before, .as-sheet *::after, .ad-dialog, .ad-overlay, .ad-toast, .ad-tooltip { animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; } }
 .as-sheet h1, .as-card h1, .as-title { font-size: var(--ad-font-size-xl); margin: 0; }
 .as-muted { color: var(--ad-color-text-muted); margin: 0; font-size: var(--ad-font-size-sm); }
 .as-error-text { color: var(--ad-color-danger-text); }

@@ -11,6 +11,7 @@ const PRINCIPAL_KINDS: readonly PrincipalKind[] = ["human", "agent_of_human", "a
 
 /** Who uses the sheet. The server still checks every write against its own token. */
 export interface EmbedPrincipal {
+  /** Checked only. It does not change what the server allows. */
   kind: PrincipalKind;
   name: string;
 }
@@ -47,12 +48,12 @@ const noop = () => {};
 
 /** The grid of one workbook, with its tabs, formula bar, and presence. It needs the design providers above it. */
 export function WorkbookView({ client, docId, principal, readOnly = false, token, onUnauthorized = noop }: MountOptions) {
-  checkPrincipal(principal);
+  checkOptions({ client, docId, principal });
   return <SheetView client={client} book={docId} token={token} name={principal.name} readOnly={readOnly} onUnauthorized={onUnauthorized} />;
 }
 
 export interface MountedSheet {
-  /** Show another workbook, principal, or mode in the same place. A bad principal throws and keeps the sheet as it is. */
+  /** Show another workbook, principal, or mode in the same place. A bad option throws and keeps the sheet as it is. After `unmount`, it does nothing. */
   update(options: MountOptions): void;
   /** Remove the sheet from the element and stop its polling and presence. Safe to call twice. */
   unmount(): void;
