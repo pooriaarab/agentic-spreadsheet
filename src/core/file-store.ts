@@ -1,31 +1,96 @@
-import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { closeSync, existsSync, linkSync, utimesSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash, randomUUID } from "node:crypto";
+import { dirname, join } from "node:path";
 import {
   assertBlobPutOptions,
   assertCollection,
-  assertResponseHeaders,
   assertId,
-  createMemoryStore,
+  assertResponseHeaders,
   parseRegion,
   type AdapterOptions,
   type Blobs,
   type Doc,
-  type Page,
-  type Query,
   type Store,
   StoreConflictError,
-  type StoreOps,
 } from "agentic-identity";
+import { createFileStore as createIdentityFileStore } from "agentic-identity/file";
 
-export interface FileStoreOptions extends AdapterOptions {
-  /** A lock older than this is taken over, even if its owner looks alive. Default 10 seconds. */
-  staleMs?: number;
-  /** How long one operation waits for the lock before it fails. Default 30 seconds. */
-  waitMs?: number;
+export type FileStoreOptions = AdapterOptions;
+
+const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
+
+/**
+ * What earlier versions left in `dir`, as documents by collection. Version 0.1.0 kept one file per workbook at
+ * <dir>/workbooks/<id>.json. Later versions kept <dir>/store.json as `{ clock, tables: { name: { id: { v, doc } } } }`.
+ * A file that is not a JSON object is an error, so a broken workbook is never dropped in the move.
+ */
+function readOld(dir: string): Map<string, Map<string, Doc>> | null {
+  const path = join(dir, "store.json");
+  const tables = new Map<string, Map<string, Doc>>();
+  if (existsSync(path)) {
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      throw new Error(`"${path}" is not an agentic-spreadsheet data file`);
+    }
+    if (isObject(raw) && raw.format !== undefined) return null;
+    if (!isObject(raw) || !isObject(raw.tables)) throw new Error(`"${path}" is not an agentic-spreadsheet data file`);
+    for (const [name, rows] of Object.entries(raw.tables)) {
+      if (!isObject(rows)) throw new Error(`"${path}" is not an agentic-spreadsheet data file`);
+      const table = new Map<string, Doc>();
+      for (const [id, row] of Object.entries(rows)) {
+        if (!isObject(row) || !isObject(row.doc)) throw new Error(`"${path}" is not an agentic-spreadsheet data file`);
+        try {
+          assertCollection(name);
+          assertId(id);
+        } catch {
+          throw new Error(`"${path}" has a name or id that this version does not accept: "${name}/${id}"`);
+        }
+        table.set(id, row.doc as Doc);
+      }
+      tables.set(name, table);
+    }
+    return tables;
+  }
+  const folder = join(dir, "workbooks");
+  if (!existsSync(folder)) return null;
+  const rows = new Map<string, Doc>();
+  for (const name of readdirSync(folder).filter((n) => n.endsWith(".json")).sort()) {
+    const file = join(folder, name);
+    let doc: unknown;
+    try {
+      doc = JSON.parse(readFileSync(file, "utf8"));
+    } catch {
+      throw new Error(`"${file}" is not valid JSON`);
+    }
+    if (!isObject(doc)) throw new Error(`"${file}" is not a workbook file`);
+    const id = name.slice(0, -5);
+    try {
+      assertId(id);
+    } catch {
+      throw new Error(`"${file}" has an id that this version does not accept. Rename the file`);
+    }
+    rows.set(id, doc as Doc);
+  }
+  if (rows.size > 0) tables.set("workbooks", rows);
+  return tables;
 }
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const MAX_ATTEMPTS = 50;
+
+/** Runs `use` again while it loses to another writer, as the Store port asks of a transaction. Other errors pass. */
+async function retrying<R>(use: () => Promise<R>): Promise<R> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await use();
+    } catch (error) {
+      if (!(error instanceof StoreConflictError) || attempt >= MAX_ATTEMPTS) throw error;
+      await sleep(Math.random() * Math.min(10 * attempt, 100));
+    }
+  }
+}
 
 /** True when no process has this id. Any other result, including no permission, counts as alive. */
 function isDead(pid: number): boolean {
@@ -37,274 +102,115 @@ function isDead(pid: number): boolean {
   }
 }
 
-const MAX_TRANSACTION_ATTEMPTS = 50;
-
-interface Row {
-  /** Every write takes the next number, so a doc deleted and made again never repeats a version. */
-  v: number;
-  doc: Doc;
+/**
+ * Takes `<path>.migrating` for the length of `use`, so two processes do not move the same data. The lock holds its owner's
+ * process id. One that is ten seconds old, or whose owner is gone, is moved aside by a rename, so one waiter wins.
+ */
+async function withMigrationLock<R>(path: string, use: () => Promise<R>): Promise<R> {
+  const lock = `${path}.migrating`;
+  const deadline = Date.now() + 30_000;
+  mkdirSync(dirname(path), { recursive: true });
+  for (;;) {
+    try {
+      writeFileSync(lock, `${process.pid}:`, { flag: "wx", mode: 0o600 });
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    try {
+      const seen = readFileSync(lock, "utf8");
+      const pid = Number(/^(\d+):/.exec(seen)?.[1]);
+      if (Date.now() - statSync(lock).mtimeMs > 10_000 || (Number.isInteger(pid) && pid > 0 && isDead(pid))) {
+        const aside = `${lock}.stale.${randomUUID()}`;
+        renameSync(lock, aside);
+        try {
+          // A lock that changed in between is a newer one. Put it back unless another already exists.
+          if (readFileSync(aside, "utf8") !== seen) {
+            try {
+              linkSync(aside, lock);
+            } catch {}
+          }
+        } finally {
+          rmSync(aside, { force: true });
+        }
+        continue;
+      }
+    } catch {
+      continue; // The lock went away between the calls. Try to take it.
+    }
+    if (Date.now() > deadline) throw new StoreConflictError(`could not lock "${lock}" within 30000 ms`);
+    await sleep(20 + Math.random() * 30);
+  }
+  // Touch the lock while the move runs, so a slow one is not taken over as stale.
+  const beat = setInterval(() => {
+    try {
+      const now = new Date();
+      utimesSync(lock, now, now);
+    } catch {}
+  }, 2_000);
+  beat.unref();
+  try {
+    return await use();
+  } finally {
+    clearInterval(beat);
+    rmSync(lock, { force: true });
+  }
 }
-type Tables = Map<string, Map<string, Row>>;
-interface Data {
-  clock: number;
-  tables: Tables;
-}
-interface Write {
-  collection: string;
-  id: string;
-  doc: Doc | null;
-}
-
-const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
 
 /**
- * A Store kept in one JSON file, safe for several processes. A write takes a
- * lock file, reads the file again, applies the change to that fresh copy, and
- * saves it with a write to a unique temp file and a rename. A read also reads
- * the file again, so a long-running process sees other writers.
- *
- * A transaction runs on a snapshot without the lock. At commit it takes the
- * lock, checks that every doc it read still has the version it saw, and then
- * writes. A doc that changed makes it run again, as the Store port requires.
- * It passes `runStoreContract`.
+ * A Store kept in `<dir>/store.json`, from agentic-identity. Data that an earlier version wrote there is moved into that format
+ * on the first call. Stop processes that run an earlier version before this one starts. Calls on one store run one at a time,
+ * so a call to the store inside a transaction callback waits for ever: use the `tx` it is given.
  */
 export function createFileStore(dir: string, options: FileStoreOptions = {}): Store {
   const path = join(dir, "store.json");
-  const region = options.region === undefined ? "unknown" : parseRegion(options.region);
-  const staleMs = options.staleMs ?? 10_000;
-  const waitMs = options.waitMs ?? 30_000;
-  const lockPath = `${path}.lock`;
-  const token = `${process.pid}:${randomBytes(8).toString("hex")}`;
-
-  /**
-   * Version 0.1.0 kept one file per workbook at <dir>/workbooks/<id>.json. Until the first write
-   * makes store.json, those documents are read from there. A read changes nothing on disk. A file
-   * that is not a JSON object is an error, so a broken workbook is never dropped in the move.
-   */
-  const legacy = (): Data => {
-    const data: Data = { clock: 0, tables: new Map() };
-    const folder = join(dir, "workbooks");
-    if (!existsSync(folder)) return data;
-    const rows = new Map<string, Row>();
-    for (const name of readdirSync(folder).filter((n) => n.endsWith(".json")).sort()) {
-      const file = join(folder, name);
-      let doc: unknown;
-      try {
-        doc = JSON.parse(readFileSync(file, "utf8"));
-      } catch {
-        throw new Error(`"${file}" is not valid JSON`);
-      }
-      if (typeof doc !== "object" || doc === null || Array.isArray(doc)) throw new Error(`"${file}" is not a workbook file`);
-      const id = name.slice(0, -5);
-      try {
-        assertId(id);
-      } catch {
-        throw new Error(`"${file}" has an id that this version does not accept. Rename the file`);
-      }
-      rows.set(id, { v: ++data.clock, doc: doc as Doc });
-    }
-    if (rows.size > 0) data.tables.set("workbooks", rows);
-    return data;
-  };
-
-  /** Reads the file and checks its shape. A version that is not a whole number up to the clock would hide a lost update. */
-  const load = (): Data => {
-    if (!existsSync(path)) return legacy();
-    const bad = () => new Error(`"${path}" is not an agentic-spreadsheet data file`);
-    const isObject = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
-    const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
-    if (!isObject(raw) || !Number.isSafeInteger(raw.clock) || (raw.clock as number) < 0 || !isObject(raw.tables)) throw bad();
-    const clock = raw.clock as number;
-    const tables: Tables = new Map();
-    for (const [name, rows] of Object.entries(raw.tables)) {
-      if (!isObject(rows)) throw bad();
-      const table = new Map<string, Row>();
-      for (const [id, row] of Object.entries(rows)) {
-        if (!isObject(row) || !Number.isSafeInteger(row.v) || (row.v as number) < 1 || (row.v as number) > clock || !isObject(row.doc)) throw bad();
-        table.set(id, { v: row.v as number, doc: row.doc as Doc });
-      }
-      tables.set(name, table);
-    }
-    return { clock, tables };
-  };
-  const save = (data: Data) => {
-    const temp = `${path}.${process.pid}.${randomBytes(6).toString("hex")}.tmp`;
-    const tables = Object.fromEntries([...data.tables].map(([name, rows]) => [name, Object.fromEntries(rows)]));
-    writeFileSync(temp, JSON.stringify({ clock: data.clock, tables }), { mode: 0o600 });
-    renameSync(temp, path);
-  };
-  const apply = (data: Data, { collection, id, doc }: Write) => {
-    if (doc === null) {
-      data.tables.get(collection)?.delete(id);
-      return;
-    }
-    if (!data.tables.has(collection)) data.tables.set(collection, new Map());
-    data.tables.get(collection)!.set(id, { v: ++data.clock, doc });
-  };
-
-  /** Judges a lock from its content and age. Content that cannot be read counts as live until it is old. */
-  const isStale = (content: string, modified: number): boolean => {
-    if (Date.now() - modified > staleMs) return true;
-    const pid = Number(/^(\d+):/.exec(content)?.[1]);
-    return Number.isInteger(pid) && pid > 0 && isDead(pid);
-  };
-
-  /** Moves a stale lock aside. The rename is atomic, so one process wins. A lock that changed in between is put back. */
-  const takeOver = (seen: string) => {
-    const aside = `${lockPath}.stale.${process.pid}.${randomBytes(6).toString("hex")}`;
-    try {
-      renameSync(lockPath, aside);
-    } catch {
-      return;
-    }
-    try {
-      if (readFileSync(aside, "utf8") !== seen) {
-        // This was a newer lock, not the stale one. Restore it unless another already exists.
+  const store = createIdentityFileStore({ ...options, path });
+  const migrate = () =>
+    withMigrationLock(path, async () => {
+      const old = readOld(dir); // Read again under the lock: another process may have moved it.
+      if (old !== null) {
+        // Build the new file beside the old one and rename it over, so a crash leaves one whole file.
+        const next = `${path}.${randomUUID()}.moving`;
         try {
-          linkSync(aside, lockPath);
-        } catch {}
-      }
-    } finally {
-      try {
-        unlinkSync(aside);
-      } catch {}
-    }
-  };
-
-  const acquire = async () => {
-    mkdirSync(dir, { recursive: true });
-    const deadline = Date.now() + waitMs;
-    for (;;) {
-      try {
-        const fd = openSync(lockPath, "wx", 0o600);
-        try {
-          writeFileSync(fd, `${token}:${Date.now()}`);
+          const target = createIdentityFileStore({ ...options, path: next });
+          await target.transaction(async (tx) => {
+            for (const [collection, rows] of old) for (const [id, doc] of rows) await tx.put(collection, id, doc);
+          });
+          // An empty store still gets a file, so a leftover 0.1.0 folder is not read again.
+          if (!existsSync(next)) await target.put("workbooks", "probe", {}).then(() => target.delete("workbooks", "probe"));
+          renameSync(next, path);
         } finally {
-          closeSync(fd);
+          rmSync(next, { force: true });
         }
-        return;
-      } catch (error) {
-        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      }
-      try {
-        const content = readFileSync(lockPath, "utf8");
-        if (isStale(content, statSync(lockPath).mtimeMs)) {
-          takeOver(content);
-          continue;
-        }
-      } catch {
-        continue; // The lock went away between the two calls. Try to take it.
-      }
-      if (Date.now() > deadline) throw new StoreConflictError(`could not lock "${path}" within ${waitMs} ms`);
-      await sleep(20 + Math.random() * 30);
-    }
-  };
-
-  const release = () => {
-    try {
-      if (readFileSync(lockPath, "utf8").startsWith(token)) unlinkSync(lockPath);
-    } catch {}
-  };
-
-  // One locked section at a time inside this process; the lock file covers other processes.
-  let queue: Promise<unknown> = Promise.resolve();
-  const exclusive = <R>(run: () => Promise<R>): Promise<R> => {
-    const next = queue.then(run, run);
-    queue = next.catch(() => undefined);
-    return next;
-  };
-
-  /** Runs `use` on a fresh copy of the file, holding the lock. `use` returns false to leave the file unsaved. */
-  const locked = <R>(use: (data: Data) => R | Promise<R>, saves: (result: R) => boolean = () => true): Promise<R> =>
-    exclusive(async () => {
-      await acquire();
-      try {
-        const data = load();
-        const result = await use(data);
-        if (saves(result)) save(data);
-        return result;
-      } finally {
-        release();
       }
     });
-
-  /** A private memory store filled from the file. The memory adapter checks names, cursors, and the read-before-write rule. */
-  const snapshot = async (data: Data): Promise<Store> => {
-    const store = createMemoryStore({ region });
-    for (const [collection, rows] of data.tables) for (const [id, row] of rows) await store.put(collection, id, row.doc);
-    return store;
-  };
-
-  async function transaction<R>(fn: (tx: StoreOps) => Promise<R>): Promise<R> {
-    for (let attempt = 0; attempt < MAX_TRANSACTION_ATTEMPTS; attempt++) {
-      const data = load();
-      const seen = new Map<string, { collection: string; id: string; v: number }>();
-      const writes: Write[] = [];
-      const note = (collection: string, id: string) => {
-        const key = `${collection}/${id}`;
-        if (!seen.has(key)) seen.set(key, { collection, id, v: data.tables.get(collection)?.get(id)?.v ?? 0 });
-      };
-      const result = await (await snapshot(data)).transaction(async (tx) => {
-        seen.clear();
-        writes.length = 0;
-        return fn({
-          async get<T extends Doc>(collection: string, id: string) {
-            const found = await tx.get<T>(collection, id);
-            note(collection, id);
-            return found;
-          },
-          async put(collection, id, doc) {
-            await tx.put(collection, id, doc);
-            writes.push({ collection, id, doc: copy(doc) });
-          },
-          async delete(collection, id) {
-            await tx.delete(collection, id);
-            writes.push({ collection, id, doc: null });
-          },
-          async query<T extends Doc>(collection: string, query?: Query): Promise<Page<T>> {
-            const page = await tx.query<T>(collection, query);
-            for (const item of page.items) note(collection, item.id);
-            return page;
-          },
-        });
-      });
-      if (seen.size === 0 && writes.length === 0) return result;
-      const unchanged = await locked(
-        (fresh) => {
-          for (const { collection, id, v } of seen.values()) if ((fresh.tables.get(collection)?.get(id)?.v ?? 0) !== v) return false;
-          for (const write of writes) apply(fresh, write);
-          return true;
-        },
-        (ok) => ok && writes.length > 0,
-      );
-      if (unchanged) return result;
+  /** True when old data may be here. A file in the new format starts with its `format` key, so a read of it needs no lock and writes nothing. */
+  const mayNeedMove = (): boolean => {
+    if (!existsSync(path)) return existsSync(join(dir, "workbooks"));
+    const fd = openSync(path, "r");
+    try {
+      const head = Buffer.alloc(10);
+      readSync(fd, head, 0, 10, 0);
+      return head.toString("utf8") !== '{"format":';
+    } finally {
+      closeSync(fd);
     }
-    throw new StoreConflictError(`transaction kept conflicting after ${MAX_TRANSACTION_ATTEMPTS} attempts`);
-  }
-
+  };
+  let moved: Promise<void> | undefined;
+  const ready = () => {
+    if (!mayNeedMove()) return Promise.resolve();
+    moved ??= migrate().finally(() => {
+      moved = undefined;
+    });
+    return moved;
+  };
   return {
-    region,
-    async get<T extends Doc>(collection: string, id: string) {
-      assertCollection(collection);
-      assertId(id);
-      const row = load().tables.get(collection)?.get(id);
-      return row ? copy(row.doc as T) : null;
-    },
-    async query<T extends Doc>(collection: string, query?: Query) {
-      return (await snapshot(load())).query<T>(collection, query);
-    },
-    async put(collection, id, doc) {
-      assertCollection(collection);
-      assertId(id);
-      const stored = copy(doc);
-      await locked((data) => apply(data, { collection, id, doc: stored }));
-    },
-    async delete(collection, id) {
-      assertCollection(collection);
-      assertId(id);
-      await locked((data) => apply(data, { collection, id, doc: null }));
-    },
-    transaction,
+    region: store.region,
+    get: async (collection, id) => (await ready(), retrying(() => store.get(collection, id))),
+    query: async (collection, query) => (await ready(), retrying(() => store.query(collection, query))),
+    put: async (collection, id, doc) => (await ready(), retrying(() => store.put(collection, id, doc))),
+    delete: async (collection, id) => (await ready(), retrying(() => store.delete(collection, id))),
+    transaction: async (fn) => (await ready(), retrying(() => store.transaction(fn))),
   };
 }
 

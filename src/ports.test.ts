@@ -5,7 +5,7 @@
 //  4. A restart loses a saved edit.
 //  5. A failed blob delete in removeWorkbook looks like success, or leaves a workbook that a second
 //     call cannot remove.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryBlobs, createMemoryStore, type Blobs, type Store } from "agentic-identity";
@@ -74,6 +74,54 @@ describe("workbooks on shared ports", () => {
     await expect(createFileStore(dir).query("workbooks")).rejects.toThrow(/__x__\.json" has an id.*Rename/);
     const accepts = (book: string) => z.object(OPS.find((o) => o.name === "new")!.shape).safeParse({ book }).success;
     expect([accepts("__y__"), accepts("a".repeat(257)), accepts("_y_"), accepts("a".repeat(256))]).toEqual([false, false, true, true]);
+  });
+
+  test("a store.json from an earlier version is moved to the identity format on first use", async () => {
+    const dir = fresh();
+    writeFileSync(join(dir, "store.json"), JSON.stringify({ clock: 2, tables: { workbooks: { a: { v: 1, doc: { name: "a" } }, b: { v: 2, doc: { name: "b" } } } } }));
+    const store = createFileStore(dir);
+    expect(await store.get("workbooks", "a")).toEqual({ name: "a" });
+    await store.put("workbooks", "c", { name: "c" });
+    expect((await createFileStore(dir).query("workbooks")).items.map((i) => i.id)).toEqual(["a", "b", "c"]);
+    expect(JSON.parse(readFileSync(join(dir, "store.json"), "utf8")).format).toBeDefined();
+    expect(readdirSync(dir).filter((n) => n.includes("moving"))).toEqual([]);
+  });
+
+  test("an empty old store.json does not bring back a leftover 0.1.0 folder, and two first calls both work", async () => {
+    const dir = fresh();
+    mkdirSync(join(dir, "workbooks"));
+    writeFileSync(join(dir, "workbooks", "ghost.json"), "{}");
+    writeFileSync(join(dir, "store.json"), JSON.stringify({ clock: 3, tables: { workbooks: {} } }));
+    expect((await createFileStore(dir).query("workbooks")).items).toEqual([]);
+    expect((await createFileStore(dir).query("workbooks")).items).toEqual([]);
+    const dir2 = fresh();
+    mkdirSync(join(dir2, "workbooks"));
+    writeFileSync(join(dir2, "workbooks", "one.json"), '{"name":"one"}');
+    const [a, b] = [createFileStore(dir2), createFileStore(dir2)];
+    await Promise.all([a.put("workbooks", "x", { name: "x" }), b.put("workbooks", "y", { name: "y" })]);
+    expect((await a.query("workbooks")).items.map((i) => i.id).sort()).toEqual(["one", "x", "y"]);
+  });
+
+  test("a store in the new format is read from a read-only folder, and a dead lock owner is taken over", async () => {
+    const dir = fresh();
+    await createFileStore(dir).put("workbooks", "a", { name: "a" });
+    chmodSync(dir, 0o555);
+    try {
+      if (process.getuid?.() !== 0) expect(await createFileStore(dir).get("workbooks", "a")).toEqual({ name: "a" });
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+    const old = fresh();
+    mkdirSync(join(old, "workbooks"));
+    writeFileSync(join(old, "workbooks", "one.json"), "{}");
+    writeFileSync(join(old, "store.json.migrating"), "2147483646:");
+    expect((await createFileStore(old).query("workbooks")).items.map((i) => i.id)).toEqual(["one"]);
+  });
+
+  test("a corrupt store.json names the file", async () => {
+    const dir = fresh();
+    writeFileSync(join(dir, "store.json"), "{oops");
+    await expect(createFileStore(dir).get("workbooks", "a")).rejects.toThrow(/store\.json" is not an agentic-spreadsheet data file/);
   });
 
   test("a read creates no directory", async () => {

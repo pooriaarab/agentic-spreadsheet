@@ -55,13 +55,12 @@ async function stored(id: string): Promise<{ id?: string; cells: Record<string, 
 }
 
 describe("a stored old workbook", () => {
-  test("the CLI reads it, a read saves nothing, and the first write saves the converted form", async () => {
+  test("the CLI reads it, a read leaves the old file and the stored form as they were, and the first write saves the converted form", async () => {
     putFile("old", legacyState());
     const read = cli("read", "old", "A1:B3").json();
     expect(read.values).toEqual([[10, 35], [20, "200A1"], ["text", null]]);
     expect(read.formulas).toEqual([[null, "=SUM(A1:A3)+'Q 3'!B2"], [null, '=$A$1*A2&"A1"'], [null, null]]);
     expect(read.authors[1][0]).toMatchObject({ id: "a1", kind: "agent_of_human", machine: true });
-    expect(existsSync(join(dir, "store.json"))).toBe(false);
     expect((await stored("old")).every((sheet) => sheet.id === undefined)).toBe(true);
     expect(cli("export", "old").out.split("\r\n")[0]).toBe("10,35,,");
     expect(cli("insert-rows", "old", "2").code).toBe(0);
@@ -74,19 +73,19 @@ describe("a stored old workbook", () => {
 
   // Every command marked read-only runs here. A new read command with no row fails the first check.
   const READS: Record<string, string[]> = { list: ["list"], read: ["read", "old", "A1:B3"], sheets: ["sheets", "old"], export: ["export", "old"] };
-  test("every read command saves nothing", async () => {
+  test("every read command leaves the old file and the stored state as they were", async () => {
     expect(Object.keys(READS).sort()).toEqual(OPS.filter((op) => op.readOnly).map((op) => op.name).sort());
     putFile("old", legacyState());
-    // The bytes of the stored file and the files in the directory, before any read.
+    // The first call moves the data into store.json. The old file and the stored state stay as they were.
     const file = join(dir, "workbooks", "old.json");
-    const before = { bytes: readFileSync(file, "utf8"), files: readdirSync(dir, { recursive: true }).sort() };
+    const before = readFileSync(file, "utf8");
     for (const [name, args] of Object.entries(READS)) {
       const r = cli(...args);
       expect([name, r.code, r.err]).toEqual([name, 0, ""]);
-      expect([name, existsSync(join(dir, "store.json"))]).toEqual([name, false]);
       const sheets = await stored("old");
       expect([name, sheets.length, sheets.every((sheet) => sheet.id === undefined)]).toEqual([name, 2, true]);
-      expect([name, readFileSync(file, "utf8"), readdirSync(dir, { recursive: true }).sort()]).toEqual([name, before.bytes, before.files]);
+      expect([name, readFileSync(file, "utf8")]).toEqual([name, before]);
+      expect([name, readFileSync(join(dir, "store.json"), "utf8").startsWith('{"format":')]).toEqual([name, true]);
     }
   });
 
