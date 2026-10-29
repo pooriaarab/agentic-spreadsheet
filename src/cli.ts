@@ -22,6 +22,8 @@ async function main(argv: string[]): Promise<number> {
   if (command === undefined || command === "--help" || command === "-h") return (console.log(HELP), 0);
   if (command === "--version" || command === "-V") return (console.log(VERSION), 0);
   if (command === "mcp") {
+    if (rest.includes("--help") || rest.includes("-h")) return (console.log(HELP), 0);
+    if (rest.includes("--version") || rest.includes("-V")) return (console.log(VERSION), 0);
     await (await import("./mcp.js")).startMcp();
     return 0;
   }
