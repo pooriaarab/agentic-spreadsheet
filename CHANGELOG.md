@@ -10,13 +10,16 @@ All notable changes to this project are listed here. The format follows
 ### Added
 
 - `agentic-spreadsheet/formats` maps a workbook to and from ODS and XLSX through `agentic-formats`: `exportFile`,
-  `importFile`, `addSheets`, `toFileBook`, `formatOf`, and `MIME`. An import adds all of its sheets or none, and refuses a file that needs a rename and has a formula that names a sheet.
+  `importFile`, `addSheets`, `toFileBook`, `formatOf`, and `MIME`. An import adds all of its sheets or none, and
+  refuses a file that needs a rename and has a formula that names a sheet.
+- `WS_PROTOCOL` from `agentic-spreadsheet/worker` is the subprotocol name that a room accepts.
 
 ### Changed
 
 - The presence room takes the key in the `agentic-spreadsheet.bearer.<key>` WebSocket subprotocol entry, next to the
   bare `agentic-spreadsheet` entry, and the bundled UI sends it that way. The `Authorization` header still works.
 - The sync worker and the browser presence client use `agentic-realtime` 0.4.1. Before, they used 0.3.0.
+- `roomGrant` throws when the identity check fails with a 5xx. Before, it returned `null`. The signature is the same.
 
 ### Deprecated
 
