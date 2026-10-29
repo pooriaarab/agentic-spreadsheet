@@ -42,7 +42,8 @@ All notable changes to this project are listed here. The format follows
   check in light and dark. A machine that runs them needs the Playwright browser.
 - New scripts: `npm run dev:ui` starts `wrangler dev`, and `npm run test:e2e` runs the Playwright tests.
 - The package has no new runtime dependencies. `agentic-design`, `agentic-realtime`, `react`, and
-  `react-dom` are development dependencies. They are built into `dist/ui`.
+  `react-dom` are development dependencies. They are built into `dist/ui`. The npm package now ships the built UI
+  in `dist/ui`, about 475 kB.
 
 ## [0.4.0] - 2026-10-29
 

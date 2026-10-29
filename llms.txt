@@ -16,7 +16,7 @@ Keywords: spreadsheet,sheets,formulas,grid,collaboration,agents,mcp,cli,csv,xlsx
   package ships the UI files in dist/ui, but not wrangler.jsonc, so the Worker runs from the repo. It uses the
   typed client, agentic-design, and a presence room from agentic-realtime. See README, "UI".
   To host the UI from the npm package: read dist/ui from node_modules/agentic-spreadsheet/dist/ui, serve it at the
-  root of an origin, and answer /api/v1/sheets and /health with the default export of agentic-spreadsheet/worker.
+  root of an origin, and answer every path under /api/v1/sheets/, and /health, with the default export of agentic-spreadsheet/worker.
   Pass an env with SHEETS_API_KEYS, or the Worker answers 500.
   Presence works only from a checkout (src/ui-worker.ts). Without it, the UI still works and shows Offline.
 - CLI and MCP: run agentic-spreadsheet --help, or agentic-spreadsheet mcp.

@@ -167,8 +167,9 @@ it. `.dev.vars` stays out of git. Data lives in memory, so a restart empties it.
   Read the files by path, from `node_modules/agentic-spreadsheet/dist/ui`. `exports` does not list them.
   A host must serve them at the root of an origin, because the asset paths start at `/`, and the UI calls
   the API on its own origin.
-  The host answers `/api/v1/sheets` and `/health` with the default export of `agentic-spreadsheet/worker`. Pass
-  an `env` with `SHEETS_API_KEYS`, or the Worker answers 500. Data lives in memory in that isolate.
+  The host answers every path under `/api/v1/sheets/`, and `/health`, with the default export of
+  `agentic-spreadsheet/worker`. Pass an `env` with `SHEETS_API_KEYS`, or the Worker answers 500.
+  Data lives in memory in that isolate.
   Presence does not work this way yet. Its socket needs `agentic-realtime` and a `SyncRoom` Durable Object,
   and `roomGrant` checks roles only in the Worker's own in-memory store. For presence, run the Worker from
   a checkout, as `src/ui-worker.ts` does. Without presence, the UI still works and shows Offline.
