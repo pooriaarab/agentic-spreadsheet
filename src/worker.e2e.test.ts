@@ -123,7 +123,7 @@ describe("refuses to start without safe auth", () => {
   test.each([
     ["none", /no auth is set.*SHEETS_API_KEYS.*SHEETS_UNSAFE_TRUST_HEADERS/],
     ["both", /not both/],
-    ["short", /at least 32 bytes/],
+    ["short", /32 to 512 bytes/],
     ["dashkey", /letters, digits/],
     ["noparent", /needs a "parent"/],
     ["badparent", /id of another key/],

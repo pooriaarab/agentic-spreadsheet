@@ -1,4 +1,4 @@
-import { createStoreAuth, intersectScopes, isScope, type Auth, type Principal as IdentityPrincipal, type Store } from "agentic-identity";
+import { assertId, createStoreAuth, intersectScopes, isScope, MAX_CHAIN_DEPTH, type Auth, type Principal as IdentityPrincipal, type Store } from "agentic-identity";
 import { PRINCIPAL_KINDS, type Principal, type PrincipalKind } from "./core/workbook.js";
 
 // Who is calling. It returns null when the request has no valid credential. `scopes` is set when the credential limits what it may do.
@@ -40,6 +40,8 @@ export function fromAuth(auth: Auth): Authenticator {
 
 const SEED_LABEL = "sheets-env";
 const KEY_CHARS = /^[A-Za-z0-9_-]+$/;
+// The longest bearer token that `createStoreAuth` reads.
+const MAX_KEY_CHARS = 512;
 const ROOT_KINDS: PrincipalKind[] = ["human", "agent"];
 // The kinds a parent may have, as in agentic-identity.
 const PARENT_KINDS: Record<string, PrincipalKind[]> = {
@@ -65,8 +67,8 @@ function seedsOf(keys: Record<string, KeyEntry>): Seed[] {
     named.set(who.id, who.kind);
   }
   const seeds = Object.entries(keys).map(([key, entry]) => {
-    if (!KEY_CHARS.test(key) || encoder.encode(key).length < MIN_KEY_BYTES) {
-      throw new ConfigError(`an API key must have only letters, digits, "_" and "-", and at least ${MIN_KEY_BYTES} bytes`);
+    if (!KEY_CHARS.test(key) || encoder.encode(key).length < MIN_KEY_BYTES || key.length > MAX_KEY_CHARS) {
+      throw new ConfigError(`an API key must have only letters, digits, "_" and "-", and ${MIN_KEY_BYTES} to ${MAX_KEY_CHARS} bytes`);
     }
     const who = principal(entry.id, entry.kind);
     if (who === null) throw new ConfigError(`each API key needs an id and a kind (${PRINCIPAL_KINDS.join(", ")})`);
@@ -88,31 +90,49 @@ function seedsOf(keys: Record<string, KeyEntry>): Seed[] {
     return { key, principal: { id: who.id, kind: who.kind, scopes: scopes as string[], ...(entry.parent === undefined ? {} : { parentId: entry.parent as string }) } };
   });
   if (seeds.length === 0) throw new ConfigError("SHEETS_API_KEYS holds no keys");
+  // A chain that loops, or runs deeper than agentic-identity allows, could never sign in. Refuse it now.
+  const parents = new Map(seeds.map(({ principal: p }) => [p.id, p.parentId]));
+  for (const id of parents.keys()) {
+    let depth = 1;
+    for (let up = parents.get(id); up !== undefined; up = parents.get(up)) {
+      depth += 1;
+      if (up === id) throw new ConfigError(`the parents of "${id}" form a loop`);
+      if (depth > MAX_CHAIN_DEPTH) throw new ConfigError(`"${id}" acts through more than ${MAX_CHAIN_DEPTH - 1} parents`);
+    }
+  }
   return seeds;
 }
 
 // Write the keys of the env into the store as principals and credentials. A credential doc is keyed by the
-// hash of its key, so the store holds no key. A principal that another tool wrote is never overwritten: that would
-// change its rights, or lift its revocation. A principal that an earlier env wrote keeps its `revokedAt` and `expiresAt`.
+// hash of its key, so the store holds no key. A principal or credential that another tool wrote is never overwritten:
+// that would change its rights, or lift its revocation. One that an earlier env wrote keeps its `revokedAt` and `expiresAt`.
+// A read that fails stops the start: a failed read must not look like "nothing there".
+// The read and the write are two steps. A revocation that lands between them is lost, so revoke a key after the
+// Worker has started, and take it out of the env too.
 async function seedKeys(store: Store, seeds: Seed[]): Promise<void> {
-  for (const { key, principal: who } of seeds) {
-    const existing = await store.get("principals", who.id).catch(() => null);
+  const own = async (collection: string, id: string, doc: Record<string, unknown>) => {
+    const existing = await store.get(collection, id);
     if (existing !== null && existing.label !== SEED_LABEL) {
-      throw new ConfigError(`the store already holds a principal "${who.id}" that this Worker did not make; pick another id`);
+      throw new ConfigError(`the store already holds a ${collection} entry that this Worker did not make (for "${doc.principalId ?? id}")`);
     }
-    const kept = existing === null ? {} : Object.fromEntries(["revokedAt", "expiresAt"].filter((k) => existing[k] != null).map((k) => [k, existing[k]]));
+    const kept = ["revokedAt", "expiresAt"].filter((k) => existing?.[k] != null).map((k) => [k, existing![k]]);
+    await store.put(collection, id, { ...doc, ...Object.fromEntries(kept), label: SEED_LABEL });
+  };
+  for (const { key, principal: who } of seeds) {
     try {
-      await store.put("principals", who.id, { ...who, ...kept, label: SEED_LABEL });
+      assertId(who.id);
     } catch {
       throw new ConfigError(`"${who.id}" is not a valid principal id for the store`);
     }
-    await store.put("credentials", await digestHex(key), { principalId: who.id, kind: "api_key", label: SEED_LABEL });
+    await own("principals", who.id, { ...who });
+    await own("credentials", await digestHex(key), { principalId: who.id, kind: "api_key" });
   }
 }
 
-// The authenticator for an env. A credential that an env wrote counts only if this env lists its key, and its scopes
-// never pass what this env gives its principal. So a key you remove from the env stops working here at once, and
-// another Worker that seeded an older env into the shared store cannot bring it back. Other credentials in the store pass through.
+// The authenticator for an env. A credential that an env wrote counts only if this env lists its key for the same
+// principal and kind, and its scopes never pass what this env gives that principal. So a key you remove from the env
+// stops working here at once, and another Worker that seeded an older env into the shared store cannot bring it back
+// or point it at another principal. Other credentials in the store pass through.
 function forEnv(auth: Authenticator, store: Store, seeds: Seed[]): Authenticator {
   const live = new Map<string, Seed>();
   const ready = Promise.all(seeds.map(async (seed) => live.set(await digestHex(seed.key), seed)));
@@ -122,12 +142,14 @@ function forEnv(auth: Authenticator, store: Store, seeds: Seed[]): Authenticator
     if (token === undefined) return null;
     const hash = await digestHex(token);
     const doc = await store.get("credentials", hash);
-    if (doc?.label === SEED_LABEL && !live.has(hash)) return null;
+    const seed = live.get(hash);
+    const written = doc?.label === SEED_LABEL;
+    if (written !== (seed !== undefined)) return null;
+    if (written && doc?.principalId !== seed?.principal.id) return null;
     const caller = await auth(request);
-    const seed = caller === null ? undefined : seeds.find((s) => s.principal.id === caller.id);
     if (caller === null || seed === undefined) return caller;
-    const scopes = intersectScopes(caller.scopes ?? [], seed.principal.scopes);
-    return { ...caller, scopes };
+    if (caller.id !== seed.principal.id || caller.kind !== seed.principal.kind) return null;
+    return { ...caller, scopes: intersectScopes(caller.scopes ?? [], seed.principal.scopes) };
   };
 }
 
