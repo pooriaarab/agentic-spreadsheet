@@ -69,7 +69,6 @@ const copy = <T>(value: T): T => JSON.parse(JSON.stringify(value)) as T;
  * It passes `runStoreContract`.
  */
 export function createFileStore(dir: string, options: FileStoreOptions = {}): Store {
-  mkdirSync(dir, { recursive: true });
   const path = join(dir, "store.json");
   const region = options.region === undefined ? "unknown" : parseRegion(options.region);
   const staleMs = options.staleMs ?? 10_000;
@@ -78,24 +77,27 @@ export function createFileStore(dir: string, options: FileStoreOptions = {}): St
   const token = `${process.pid}:${randomBytes(8).toString("hex")}`;
 
   /**
-   * Version 0.1.0 kept one file per document under <dir>/<collection>/<id>.json. Until the first
-   * write makes store.json, those documents are read from there. A read changes nothing on disk.
+   * Version 0.1.0 kept one file per workbook at <dir>/workbooks/<id>.json. Until the first write
+   * makes store.json, those documents are read from there. A read changes nothing on disk. A file
+   * that is not a JSON object is an error, so a broken workbook is never dropped in the move.
    */
   const legacy = (): Data => {
     const data: Data = { clock: 0, tables: new Map() };
-    for (const folder of readdirSync(dir, { withFileTypes: true })) {
-      if (!folder.isDirectory()) continue;
-      const rows = new Map<string, Row>();
-      for (const name of readdirSync(join(dir, folder.name)).filter((n) => n.endsWith(".json")).sort()) {
-        try {
-          const doc = JSON.parse(readFileSync(join(dir, folder.name, name), "utf8")) as unknown;
-          if (typeof doc === "object" && doc !== null && !Array.isArray(doc)) rows.set(name.slice(0, -5), { v: ++data.clock, doc: doc as Doc });
-        } catch {
-          // A file that is not JSON is not a document.
-        }
+    const folder = join(dir, "workbooks");
+    if (!existsSync(folder)) return data;
+    const rows = new Map<string, Row>();
+    for (const name of readdirSync(folder).filter((n) => n.endsWith(".json")).sort()) {
+      const file = join(folder, name);
+      let doc: unknown;
+      try {
+        doc = JSON.parse(readFileSync(file, "utf8"));
+      } catch {
+        throw new Error(`"${file}" is not valid JSON`);
       }
-      if (rows.size > 0) data.tables.set(folder.name, rows);
+      if (typeof doc !== "object" || doc === null || Array.isArray(doc)) throw new Error(`"${file}" is not a workbook file`);
+      rows.set(name.slice(0, -5), { v: ++data.clock, doc: doc as Doc });
     }
+    if (rows.size > 0) data.tables.set("workbooks", rows);
     return data;
   };
 
@@ -164,6 +166,7 @@ export function createFileStore(dir: string, options: FileStoreOptions = {}): St
   };
 
   const acquire = async () => {
+    mkdirSync(dir, { recursive: true });
     const deadline = Date.now() + waitMs;
     for (;;) {
       try {
@@ -299,9 +302,8 @@ export function createFileStore(dir: string, options: FileStoreOptions = {}): St
   };
 }
 
-/** Blobs kept as files under `dir`. File names are key hashes, so no key escapes the folder. */
+/** Blobs kept as files under `dir`. Safe within one process only: the check and the write of a conditional put are not one step across processes, and the content type file is written after the data. File names are key hashes, so no key escapes the folder. */
 export function createFileBlobs(dir: string, options: AdapterOptions = {}): Blobs {
-  mkdirSync(dir, { recursive: true });
   const path = (key: string) => join(dir, createHash("sha256").update(key).digest("hex"));
   const need = (key: string) => {
     if (key === "") throw new Error("blob key must not be empty");
@@ -329,6 +331,7 @@ export function createFileBlobs(dir: string, options: AdapterOptions = {}): Blob
       const current = read(key);
       if (opts?.ifNoneMatch === "*" && current !== null) return null;
       if (opts?.ifMatch !== undefined && (current === null || versionOf(current) !== opts.ifMatch)) return null;
+      mkdirSync(dir, { recursive: true });
       const temp = `${path(key)}.${randomUUID()}.tmp`;
       writeFileSync(temp, data);
       renameSync(temp, path(key));

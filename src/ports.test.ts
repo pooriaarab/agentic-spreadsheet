@@ -3,7 +3,7 @@
 //  2. A failed edit leaves a state blob, or points a workbook at one.
 //  3. A transaction that runs again leaves the blob of its first run.
 //  4. A restart loses a saved edit.
-import { mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryBlobs, createMemoryStore, type Blobs, type Store } from "agentic-identity";
@@ -33,14 +33,46 @@ const keys = async (dir: string) => readdirSync(dir).filter((n) => !n.endsWith("
 
 describe("workbooks on shared ports", () => {
   test("concurrent edits through two contexts on one store lose none and apply none twice", async () => {
-    const [store, blobs] = [createMemoryStore(), createMemoryBlobs()];
-    const [one, two] = [ctxOf(store, blobs), ctxOf(store, blobs)];
+    const [one, two] = [1, 2].map(() => ctxOf(createMemoryStore({ shared: "race" }), createMemoryBlobs({ shared: "race" })));
     await run("new", { book: "race" }, one);
     await Promise.all(Array.from({ length: 24 }, (_, i) => run("write", { book: "race", anchor: `A${i + 1}`, values: [[i]] }, i % 2 ? one : two)));
     await Promise.all([run("insert-rows", { book: "race", at: 1, count: 1 }, one), run("insert-rows", { book: "race", at: 1, count: 1 }, two)]);
     const read = (await run("read", { book: "race", range: "A1:A28" }, one)) as { values: unknown[][] };
     expect(read.values.flat().filter((v) => v !== null).sort((a, b) => Number(a) - Number(b))).toEqual(Array.from({ length: 24 }, (_, i) => i));
     expect(read.values.slice(0, 2)).toEqual([[null], [null]]);
+  });
+
+  test("two file stores on one directory lose none and apply none twice", async () => {
+    const dir = fresh();
+    const open = () => ctxOf(createFileStore(dir), createFileBlobs(join(dir, "blobs")));
+    const [one, two] = [open(), open()];
+    await run("new", { book: "race" }, one);
+    await Promise.all(Array.from({ length: 16 }, (_, i) => run("insert-rows", { book: "race", at: 1, count: 1 }, i % 2 ? one : two)));
+    await Promise.all(Array.from({ length: 16 }, (_, i) => run("write", { book: "race", anchor: `A${i + 17}`, values: [[i]] }, i % 2 ? one : two)));
+    const read = (await run("read", { book: "race", range: "A1:A32" }, one)) as { values: unknown[][] };
+    expect(read.values.slice(0, 16).flat()).toEqual(Array(16).fill(null));
+    expect(read.values.slice(16).flat().sort((a, b) => Number(a) - Number(b))).toEqual(Array.from({ length: 16 }, (_, i) => i));
+  });
+
+  test("list returns every book when no limit is set, and a broken or odd old file is an error", async () => {
+    const [store, blobs] = [createMemoryStore(), createMemoryBlobs()];
+    const ctx = ctxOf(store, blobs);
+    for (let i = 0; i < 130; i += 1) await store.put("workbooks", `b${String(i).padStart(3, "0")}`, { name: "x" });
+    expect(((await run("list", {}, ctx)) as { books: string[] }).books).toHaveLength(130);
+    const dir = fresh();
+    mkdirSync(join(dir, "workbooks"), { recursive: true });
+    writeFileSync(join(dir, "workbooks", "broken.json"), "{not json");
+    writeFileSync(join(dir, "stray.json"), "{}");
+    await expect(createFileStore(dir).get("workbooks", "broken")).rejects.toThrow(/not valid JSON/);
+    await expect(createFileStore(dir).put("workbooks", "fresh", { name: "x" })).rejects.toThrow(/not valid JSON/);
+    expect(existsSync(join(dir, "store.json"))).toBe(false);
+  });
+
+  test("a read creates no directory", async () => {
+    const dir = join(fresh(), "none");
+    const ctx = ctxOf(createFileStore(dir), createFileBlobs(join(dir, "blobs")));
+    await expect(run("read", { book: "x", range: "A1" }, ctx)).rejects.toThrow(/no workbook/);
+    expect(existsSync(dir)).toBe(false);
   });
 
   test("a failed edit leaves the old state and no extra blob", async () => {

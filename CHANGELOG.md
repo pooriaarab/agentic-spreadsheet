@@ -9,7 +9,14 @@ All notable changes to this project are listed here. The format follows
 
 - Storage uses the `Store` and `Blobs` ports of `agentic-identity`. The CLI file store keeps a
   document file and a blob folder. A workbook saved by 0.1.0 is read as it is.
+- `list` sorts ids by code unit (`B` before `a`), as the `Store` port does. With no limit it returns every id.
+- The file adapter writes under the store directory only on a write, and a broken 0.1.0 workbook file is an error.
+- A writer that keeps meeting other writers gives up after 50 tries and answers 409 "Try again". Version 0.1.0 waited on one lock.
 - A workbook list cursor is opaque. Pass back the `cursor` that `list` returned.
+
+### Removed
+
+- `MemoryStore`, `FileStore`, `queryDocs`, `SAFE_NAME`, and the types `Doc`, `QueryOptions`, and `QueryResult`. Use `createMemoryStore`, `createFileStore`, and the `Store` type.
 
 ## [0.1.0] - 2026-10-29
 

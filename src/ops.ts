@@ -72,15 +72,16 @@ async function open(ctx: Ctx, ops: StoreOps, id: string): Promise<{ wb: Workbook
   const doc = await ops.get(COLLECTION, id);
   if (doc === null) throw new OpError(`no workbook "${id}"`, 404);
   if (typeof doc.state === "string") return { wb: Workbook.fromState(fromBase64(doc.state)) };
-  const blob = typeof doc.blob === "string" ? await ctx.blobs.get(doc.blob) : null;
+  if (typeof doc.blob !== "string") throw new Error(`the stored record of workbook "${id}" is malformed`);
+  const blob = await ctx.blobs.get(doc.blob);
   if (blob === null) throw new Stale(id);
-  return { wb: Workbook.fromState(blob.data), key: doc.blob as string };
+  return { wb: Workbook.fromState(blob.data), key: doc.blob };
 }
 
 // Run `work` in a transaction. A blob it writes is dropped when the transaction runs again, throws, or
 // is overtaken, so a failed attempt leaves nothing that a workbook points at. `work` returns the result
 // and the key of the state it replaced.
-async function transact<T>(ctx: Ctx, work: (tx: StoreOps, written: (key: string) => void) => Promise<{ result: T; old?: string }>): Promise<T> {
+async function transact<T>(ctx: Ctx, work: (tx: StoreOps, written: (key: string, id: string) => void) => Promise<{ result: T; old?: string }>): Promise<T> {
   for (let attempt = 1; ; attempt += 1) {
     try {
       return await transactOnce(ctx, work);
@@ -101,29 +102,31 @@ async function view(ctx: Ctx, id: string): Promise<Workbook> {
   }
 }
 
-async function transactOnce<T>(ctx: Ctx, work: (tx: StoreOps, written: (key: string) => void) => Promise<{ result: T; old?: string }>): Promise<T> {
+async function transactOnce<T>(ctx: Ctx, work: (tx: StoreOps, written: (key: string, id: string) => void) => Promise<{ result: T; old?: string }>): Promise<T> {
   let pending: string | undefined;
+  let owner = "";
   const drop = (key: string | undefined) => (key === undefined ? undefined : ctx.blobs.delete(key).catch(() => undefined));
   try {
     const { result, old } = await ctx.store.transaction(async (tx) => {
       await drop(pending);
       pending = undefined;
-      return work(tx, (key) => void (pending = key));
+      return work(tx, (key, id) => void ([pending, owner] = [key, id]));
     });
     pending = undefined;
     await drop(old);
     return result;
   } catch (error) {
-    await drop(pending);
+    // An adapter may commit and then fail. Keep a blob that the document already points at.
+    if (pending !== undefined && (await ctx.store.get(COLLECTION, owner).catch(() => null))?.blob !== pending) await drop(pending);
     if (error instanceof StoreConflictError) throw new OpError("another writer changed the workbook. Try again", 409);
     throw error;
   }
 }
 
-async function save(ctx: Ctx, tx: StoreOps, written: (key: string) => void, id: string, wb: Workbook): Promise<void> {
+async function save(ctx: Ctx, tx: StoreOps, written: (key: string, id: string) => void, id: string, wb: Workbook): Promise<void> {
   const key = newKey(id);
   await ctx.blobs.put(key, wb.encode(), { contentType: "application/octet-stream" });
-  written(key);
+  written(key, id);
   await tx.put(COLLECTION, id, { name: id, blob: key, updatedAt: new Date().toISOString() });
 }
 
@@ -165,11 +168,21 @@ export const OPS: Op[] = [
     },
   },
   {
-    name: "list", description: "List workbook ids in name order.", args: [], readOnly: true,
+    name: "list", description: "List workbook ids in id order (by code unit: B before a). Without a limit, list all.", args: [], readOnly: true,
     shape: { limit: z.coerce.number().int().min(1).optional(), cursor: z.string().optional() },
     async run(a: { limit?: number; cursor?: string }, ctx) {
-      const { items, nextCursor } = await ctx.store.query(COLLECTION, a);
-      return { books: items.map((i) => i.id), cursor: nextCursor };
+      // With no limit the caller asked for every book, so read page after page.
+      if (a.limit !== undefined) {
+        const { items, nextCursor } = await ctx.store.query(COLLECTION, a);
+        return { books: items.map((i) => i.id), cursor: nextCursor };
+      }
+      const books: string[] = [];
+      for (let cursor = a.cursor; ; ) {
+        const page = await ctx.store.query(COLLECTION, { cursor });
+        books.push(...page.items.map((i) => i.id));
+        if (page.nextCursor === undefined) return { books };
+        cursor = page.nextCursor;
+      }
     },
   },
   {
