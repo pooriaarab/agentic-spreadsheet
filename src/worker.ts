@@ -90,7 +90,13 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
     const op = OPS.find((o) => o.name === name)!;
     api.on(method, path, async (c) => {
       const book = c.req.param("book");
-      const denied = book === undefined ? null : await guard(c, op.readOnly ? "read" : "write", book);
+      const action = op.readOnly ? "read" : "write";
+      // `list` and `new` name no book, so the scope is all that limits them.
+      const scopes = c.get("scopes");
+      if (book === undefined && scopes !== undefined && !hasScope(scopes, `workbook:${action}`)) {
+        return c.json({ error: `this credential has no ${action} scope` }, 403);
+      }
+      const denied = book === undefined ? null : await guard(c, action, book);
       if (denied !== null) return denied;
       let body: unknown = {};
       // A read and a delete carry their input in the path and the query string.
@@ -193,18 +199,19 @@ export async function storageFor(env: WorkerEnv): Promise<{ store: Store; blobs:
   return entry.ready;
 }
 
-let cached: { keys?: string; unsafe?: string; store: Store; auth: Authenticator } | undefined;
+let cached: { keys?: string; unsafe?: string; store: Store; auth: Promise<Authenticator> } | undefined;
 
 // The authenticator for this env and store. It throws ConfigError when the env sets no valid sign-in.
-// The keys are written into the store once for each store, not on every request.
+// The keys are written into the store once for each store, not on every request. The cache holds the promise,
+// so requests that arrive together share one seed.
 async function authenticatorFor(env: WorkerEnv, store: Store): Promise<Authenticator> {
   if (cached?.keys === env.SHEETS_API_KEYS && cached?.unsafe === env.SHEETS_UNSAFE_TRUST_HEADERS && cached?.store === store) return cached.auth;
+  const entry = { keys: env.SHEETS_API_KEYS, unsafe: env.SHEETS_UNSAFE_TRUST_HEADERS, store, auth: authFromEnv(env, store) };
+  cached = entry;
   try {
-    const auth = await authFromEnv(env, store);
-    cached = { keys: env.SHEETS_API_KEYS, unsafe: env.SHEETS_UNSAFE_TRUST_HEADERS, store, auth };
-    return auth;
+    return await entry.auth;
   } catch (error) {
-    cached = undefined;
+    if (cached === entry) cached = undefined;
     throw error;
   }
 }
@@ -221,8 +228,11 @@ export async function roomGrant(request: Request, book: string, env: WorkerEnv) 
   if (who === null) return null;
   const principal = { id: who.id, kind: who.kind };
   const { allowed, role } = await createAccess(store).role(principal, "read", book);
-  const scoped = who.scopes === undefined || hasScope(who.scopes, "workbook:read");
-  return allowed && role !== null && scoped ? { principal, role, name: who.id } : null;
+  if (!allowed || role === null || (who.scopes !== undefined && !hasScope(who.scopes, "workbook:read"))) return null;
+  // A key without the write scope joins as a viewer, and one without the admin scope never as an owner.
+  const may = (action: string) => who.scopes === undefined || hasScope(who.scopes, `workbook:${action}`);
+  const capped = !may("write") ? "viewer" : role === "owner" && !may("admin") ? "editor" : role;
+  return { principal, role: capped, name: who.id };
 }
 
 // Data lives in D1 and R2, so it outlives the isolate.

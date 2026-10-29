@@ -1,4 +1,4 @@
-import { createStoreAuth, isScope, type Auth, type Principal as IdentityPrincipal, type Store } from "agentic-identity";
+import { createStoreAuth, intersectScopes, isScope, type Auth, type Principal as IdentityPrincipal, type Store } from "agentic-identity";
 import { PRINCIPAL_KINDS, type Principal, type PrincipalKind } from "./core/workbook.js";
 
 // Who is calling. It returns null when the request has no valid credential. `scopes` is set when the credential limits what it may do.
@@ -26,10 +26,13 @@ export interface Caller extends Principal {
 }
 
 // The caller behind a request, from an agentic-identity `Auth`. The port reads the credential and resolves the chain,
-// so a revoked or expired principal anywhere above the credential gives null.
+// so a revoked or expired principal anywhere above the credential gives null. A session cookie is not a credential
+// here: the API takes a bearer key only, so a cross-site request that carries a cookie gets nothing.
 export function fromAuth(auth: Auth): Authenticator {
   return async (request) => {
-    const context = await auth.authenticate(request);
+    const headers = new Headers(request.headers);
+    headers.delete("cookie");
+    const context = await auth.authenticate(new Request(request.url, { method: request.method, headers }));
     if (context === null || !PRINCIPAL_KINDS.includes(context.kind) || !ID.test(context.principalId)) return null;
     return { id: context.principalId, kind: context.kind, scopes: context.scopes };
   };
@@ -38,17 +41,28 @@ export function fromAuth(auth: Auth): Authenticator {
 const SEED_LABEL = "sheets-env";
 const KEY_CHARS = /^[A-Za-z0-9_-]+$/;
 const ROOT_KINDS: PrincipalKind[] = ["human", "agent"];
+// The kinds a parent may have, as in agentic-identity.
+const PARENT_KINDS: Record<string, PrincipalKind[]> = {
+  agent_of_human: ["human"],
+  agent_of_agent: ["agent", "agent_of_human", "agent_of_agent"],
+  user_token: ["human"],
+};
+
+type KeyEntry = { id?: unknown; kind?: unknown; parent?: unknown; scopes?: unknown };
 
 interface Seed {
   key: string;
   principal: IdentityPrincipal;
 }
 
-function seedsOf(keys: Record<string, { id?: unknown; kind?: unknown; parent?: unknown; scopes?: unknown }>): Seed[] {
+function seedsOf(keys: Record<string, KeyEntry>): Seed[] {
   const named = new Map<string, PrincipalKind>();
   for (const entry of Object.values(keys)) {
     const who = principal(entry.id, entry.kind);
-    if (who !== null) named.set(who.id, who.kind);
+    if (who === null) continue;
+    // Scopes and kind live on the principal, so two keys with one id would share them: the last would win.
+    if (named.has(who.id)) throw new ConfigError(`two keys name the id "${who.id}"; give each key its own id`);
+    named.set(who.id, who.kind);
   }
   const seeds = Object.entries(keys).map(([key, entry]) => {
     if (!KEY_CHARS.test(key) || encoder.encode(key).length < MIN_KEY_BYTES) {
@@ -64,8 +78,12 @@ function seedsOf(keys: Record<string, { id?: unknown; kind?: unknown; parent?: u
     if (root !== (entry.parent === undefined)) {
       throw new ConfigError(root ? `a ${who.kind} has no parent` : `a ${who.kind} needs a "parent": the id of the principal it acts for`);
     }
-    if (entry.parent !== undefined && (typeof entry.parent !== "string" || !named.has(entry.parent))) {
+    const parentKind = typeof entry.parent === "string" ? named.get(entry.parent) : undefined;
+    if (entry.parent !== undefined && (parentKind === undefined || entry.parent === who.id)) {
       throw new ConfigError(`the parent of "${who.id}" must be the id of another key's principal`);
+    }
+    if (parentKind !== undefined && !PARENT_KINDS[who.kind]?.includes(parentKind)) {
+      throw new ConfigError(`a ${who.kind} cannot act for a ${parentKind}`);
     }
     return { key, principal: { id: who.id, kind: who.kind, scopes: scopes as string[], ...(entry.parent === undefined ? {} : { parentId: entry.parent as string }) } };
   });
@@ -73,28 +91,44 @@ function seedsOf(keys: Record<string, { id?: unknown; kind?: unknown; parent?: u
   return seeds;
 }
 
-// Write the keys of the env into the store as principals and credentials, then drop each credential that an earlier
-// env wrote and this one lacks. A credential doc is keyed by the hash of its key, so the store holds no key.
-// Credentials that another tool wrote (no `sheets-env` label) stay.
-export async function seedKeys(store: Store, keys: Record<string, { id?: unknown; kind?: unknown; parent?: unknown; scopes?: unknown }>): Promise<void> {
-  const seeds = seedsOf(keys);
-  const live = new Set<string>();
+// Write the keys of the env into the store as principals and credentials. A credential doc is keyed by the
+// hash of its key, so the store holds no key. A principal that another tool wrote is never overwritten: that would
+// change its rights, or lift its revocation. A principal that an earlier env wrote keeps its `revokedAt` and `expiresAt`.
+async function seedKeys(store: Store, seeds: Seed[]): Promise<void> {
   for (const { key, principal: who } of seeds) {
-    const hash = await digestHex(key);
-    live.add(hash);
+    const existing = await store.get("principals", who.id).catch(() => null);
+    if (existing !== null && existing.label !== SEED_LABEL) {
+      throw new ConfigError(`the store already holds a principal "${who.id}" that this Worker did not make; pick another id`);
+    }
+    const kept = existing === null ? {} : Object.fromEntries(["revokedAt", "expiresAt"].filter((k) => existing[k] != null).map((k) => [k, existing[k]]));
     try {
-      await store.put("principals", who.id, { ...who });
+      await store.put("principals", who.id, { ...who, ...kept, label: SEED_LABEL });
     } catch {
       throw new ConfigError(`"${who.id}" is not a valid principal id for the store`);
     }
-    await store.put("credentials", hash, { principalId: who.id, kind: "api_key", label: SEED_LABEL });
+    await store.put("credentials", await digestHex(key), { principalId: who.id, kind: "api_key", label: SEED_LABEL });
   }
-  for (let cursor: string | undefined; ; ) {
-    const page = await store.query("credentials", { where: { label: SEED_LABEL }, ...(cursor === undefined ? {} : { cursor }) });
-    for (const doc of page.items) if (!live.has(doc.id)) await store.delete("credentials", doc.id);
-    if (page.nextCursor === undefined || page.nextCursor === null) break;
-    cursor = page.nextCursor;
-  }
+}
+
+// The authenticator for an env. A credential that an env wrote counts only if this env lists its key, and its scopes
+// never pass what this env gives its principal. So a key you remove from the env stops working here at once, and
+// another Worker that seeded an older env into the shared store cannot bring it back. Other credentials in the store pass through.
+function forEnv(auth: Authenticator, store: Store, seeds: Seed[]): Authenticator {
+  const live = new Map<string, Seed>();
+  const ready = Promise.all(seeds.map(async (seed) => live.set(await digestHex(seed.key), seed)));
+  return async (request) => {
+    await ready;
+    const token = /^Bearer ([A-Za-z0-9_-]{1,512})$/.exec(request.headers.get("authorization") ?? "")?.[1];
+    if (token === undefined) return null;
+    const hash = await digestHex(token);
+    const doc = await store.get("credentials", hash);
+    if (doc?.label === SEED_LABEL && !live.has(hash)) return null;
+    const caller = await auth(request);
+    const seed = caller === null ? undefined : seeds.find((s) => s.principal.id === caller.id);
+    if (caller === null || seed === undefined) return caller;
+    const scopes = intersectScopes(caller.scopes ?? [], seed.principal.scopes);
+    return { ...caller, scopes };
+  };
 }
 
 // Trust the caller's own claim. Anyone who can reach the Worker can write as anyone. Tests only.
@@ -128,8 +162,9 @@ export async function authFromEnv(env: AuthEnv, store: Store): Promise<Authentic
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new ConfigError('SHEETS_API_KEYS must be JSON: {"<key>": {"id": "...", "kind": "agent"}}');
     }
-    await seedKeys(store, parsed as Record<string, { id?: unknown; kind?: unknown }>);
-    return fromAuth(createStoreAuth(store));
+    const seeds = seedsOf(parsed as Record<string, KeyEntry>);
+    await seedKeys(store, seeds);
+    return forEnv(fromAuth(createStoreAuth(store)), store, seeds);
   }
   if (unsafe) return trustHeaders;
   throw new ConfigError(

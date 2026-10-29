@@ -23,14 +23,15 @@ All notable changes to this project are listed here. The format follows
 
 - An entry in `SHEETS_API_KEYS` can set `scopes`, such as `["workbook:read"]`. A key cannot do more than its scopes
   allow, whatever its role on a workbook. The default is `["*:admin"]`.
-- A key that you remove from `SHEETS_API_KEYS` stops working at the next start of the Worker. Credentials that
-  another tool wrote to the store stay.
+- A key that you remove from `SHEETS_API_KEYS` stops working in that Worker at once. Its hash stays in the store
+  until you revoke it with `agentic-identity`. Credentials that another tool wrote to the store pass through.
+- The Worker refuses a start when two keys name one id, when a parent has the wrong kind, or when the store already
+  holds a principal of that id that this Worker did not make. A session cookie is not a credential: use a bearer key.
 - Named exports `fromAuth` (an `Authenticator` from any `Auth`) and `storageFor` (the D1 store and R2 blobs for an env) from `agentic-spreadsheet/worker`.
 
 ### Changed
 
 - Data survives a Worker restart. The in-memory store stays in the SDK for tests.
-- The Worker is exported as `agentic-spreadsheet/worker` (this was already so).
 
 ## [0.5.0] - 2026-10-29
 

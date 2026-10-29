@@ -23,6 +23,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 // - export is not CSV, or a response can be cached
 // - a workbook is gone after the Worker restarts, or a Worker on a new directory sees another Worker's data
 // - the Worker serves with no region, with the region "unknown" and no unsafe flag, or with a bad region
+// - two keys share one id and one set of scopes, or a read-scoped key creates a book, joins a room as an editor, or opens with a cookie
 // - a viewer writes, a key with only the read scope writes, or a key that left the env still works after a restart
 // - /health reports a version other than package.json
 
@@ -89,6 +90,8 @@ beforeAll(async () => {
     badparent: { SHEETS_API_KEYS: JSON.stringify({ [KEY_A]: { id: "a", kind: "agent_of_human", parent: "nobody" } }) },
     badscope: { SHEETS_API_KEYS: JSON.stringify({ [KEY_A]: { id: "a", kind: "agent", scopes: ["root"] } }) },
     dashkey: { SHEETS_API_KEYS: JSON.stringify({ "has.dots.0123456789-0123456789-abcdef": { id: "a", kind: "agent" } }) },
+    dupid: { SHEETS_API_KEYS: JSON.stringify({ [KEY_A]: { id: "a", kind: "agent", scopes: ["workbook:read"] }, [KEY_H]: { id: "a", kind: "agent" } }) },
+    wrongparent: { SHEETS_API_KEYS: JSON.stringify({ [KEY_A]: { id: "a", kind: "agent_of_human", parent: "b" }, [KEY_H]: { id: "b", kind: "agent" } }) },
     short: { SHEETS_API_KEYS: JSON.stringify({ "too-short": { id: "a", kind: "agent" } }) },
     nokind: { SHEETS_API_KEYS: JSON.stringify({ [KEY_A]: { id: "a" } }) },
     badkind: { SHEETS_API_KEYS: JSON.stringify({ [KEY_A]: { id: "a", kind: "root" } }) },
@@ -125,6 +128,8 @@ describe("refuses to start without safe auth", () => {
     ["noparent", /needs a "parent"/],
     ["badparent", /id of another key/],
     ["badscope", /scopes must be/],
+    ["dupid", /two keys name the id/],
+    ["wrongparent", /cannot act for/],
     ["nokind", /id and a kind/],
     ["badkind", /id and a kind/],
     ["badjson", /must be JSON/],
@@ -326,6 +331,12 @@ describe("identity credentials", () => {
     expect((await call("roles", "PUT", `${API}/team/range`, { ...as(KEY_R), ...write })).status).toBe(403);
     expect((await call("roles", "GET", `${API}/team/range?range=A1`, as(KEY_R))).status).toBe(200);
     expect((await call("roles", "PUT", `${API}/team/range`, { ...as(KEY_H), ...write })).status).toBe(200);
+    // `new` names no book: the scope alone stops it.
+    expect((await call("roles", "POST", API, { ...as(KEY_R), body: { book: "mine" } })).status).toBe(403);
+    expect((await call("roles", "GET", API, as(KEY_R))).status).toBe(200);
+    expect((await call("roles", "GET", `${API}/mine/range?range=A1`, as(KEY_H))).status).toBe(404);
+    // A session cookie is not a credential.
+    expect((await call("roles", "GET", API, { headers: { cookie: `session=${KEY_H}` } })).status).toBe(401);
   }, 120_000);
 
   test("a key that leaves the env stops working after a restart, and the others keep their data", async () => {
