@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createAccess, NoShare, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
-import { EraseRefusedError, hasScope, parseRegion, type Blobs, type Region, type Store } from "agentic-identity";
+import { EraseRefusedError, hasScope, parseRegion, type Blobs, type Role, type Region, type Store } from "agentic-identity";
 import { createD1Store, createR2Blobs, D1_SCHEMA, type D1Like, type R2Like } from "agentic-identity/cloudflare";
 import { message, OpError, OPS, removeWorkbook } from "./ops.js";
 import { VERSION } from "./version.js";
@@ -216,6 +216,12 @@ async function authenticatorFor(env: WorkerEnv, store: Store): Promise<Authentic
   }
 }
 
+// The role a key holds in a room. A key without the write scope joins as a viewer, and one without the admin scope never as an owner.
+export function roomRole(role: Role, scopes: string[] | undefined): Role {
+  const may = (action: string) => scopes === undefined || hasScope(scopes, `workbook:${action}`);
+  return !may("write") ? "viewer" : role === "owner" && !may("admin") ? "editor" : role;
+}
+
 // Who may join the presence room of a book, and as what. A browser cannot set a header on a
 // WebSocket, so the key may also come in the `token` query parameter. The room carries presence only:
 // cells travel through the API. A principal with no read right on the book gets null.
@@ -229,9 +235,7 @@ export async function roomGrant(request: Request, book: string, env: WorkerEnv) 
   const principal = { id: who.id, kind: who.kind };
   const { allowed, role } = await createAccess(store).role(principal, "read", book);
   if (!allowed || role === null || (who.scopes !== undefined && !hasScope(who.scopes, "workbook:read"))) return null;
-  // A key without the write scope joins as a viewer, and one without the admin scope never as an owner.
-  const may = (action: string) => who.scopes === undefined || hasScope(who.scopes, `workbook:${action}`);
-  const capped = !may("write") ? "viewer" : role === "owner" && !may("admin") ? "editor" : role;
+  const capped = roomRole(role, who.scopes);
   return { principal, role: capped, name: who.id };
 }
 

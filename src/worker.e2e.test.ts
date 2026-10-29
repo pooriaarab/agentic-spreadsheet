@@ -128,7 +128,7 @@ describe("refuses to start without safe auth", () => {
     ["noparent", /needs a "parent"/],
     ["badparent", /id of another key/],
     ["badscope", /scopes must be/],
-    ["dupid", /two keys name the id/],
+    ["dupid", /two keys name one id/],
     ["wrongparent", /cannot act for/],
     ["nokind", /id and a kind/],
     ["badkind", /id and a kind/],
