@@ -15,20 +15,34 @@ All notable changes to this project are listed here. The format follows
 
 - The `staleMs` and `waitMs` options of `createFileStore`. The lock now waits 5 seconds and is taken over after 3.
 
+## [0.8.0] - 2026-10-29
+
 ### Added
 
 - `agentic-spreadsheet/formats` maps a workbook to and from ODS and XLSX through `agentic-formats`: `exportFile`,
-  `importFile`, `addSheets`, `toFileBook`, `formatOf`, and `MIME`. An import adds all of its sheets or none, and refuses a file that needs a rename and has a formula that names a sheet.
+  `importFile`, `addSheets`, `toFileBook`, `formatOf`, and `MIME`. An import adds all of its sheets or none, and
+  refuses a file that needs a rename and has a formula that names a sheet.
+- `WS_PROTOCOL` from `agentic-spreadsheet/worker` is the subprotocol name that a room accepts.
 
 ### Changed
 
 - The presence room takes the key in the `agentic-spreadsheet.bearer.<key>` WebSocket subprotocol entry, next to the
   bare `agentic-spreadsheet` entry, and the bundled UI sends it that way. The `Authorization` header still works.
+- The sync worker and the browser presence client use `agentic-realtime` 0.4.1. Before, they used 0.3.0.
 
 ### Deprecated
 
 - The `token` query parameter of the room URL. It works for one more release, and never when the request offers a
   subprotocol key. The next release removes it.
+
+### Fixed
+
+- `agentic-spreadsheet mcp --help` and `mcp --version` print their text and exit with 0. Before, both started the
+  server and waited on stdin.
+
+### Documentation
+
+- The README no longer says that ODS and XLSX import and export are not built yet.
 
 ## [0.7.1] - 2026-10-29
 
