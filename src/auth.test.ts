@@ -18,6 +18,37 @@ const OLD = "old-key-0123456789-0123456789-abcdefghij";
 const call = (auth: Awaited<ReturnType<typeof authFromEnv>>, key: string) => auth(new Request("https://x.test/", { headers: { authorization: `Bearer ${key}` } }));
 const env = (keys: object) => ({ SHEETS_API_KEYS: JSON.stringify(keys) });
 
+describe("the identity store alone", () => {
+  test("starts with no SHEETS_API_KEYS and accepts an identity-issued key", async () => {
+    const store = createMemoryStore();
+    await store.put("principals", "ana", { id: "ana", kind: "human", scopes: ["*:admin"] });
+    const token = await issueCredential(store, { principalId: "ana", kind: "api_key" });
+    expect(await call(await authFromEnv({}, store), token)).toMatchObject({ id: "ana", kind: "human" });
+  });
+
+  test("rejects an unknown key and a request with no key", async () => {
+    const auth = await authFromEnv({}, createMemoryStore());
+    expect(await call(auth, KEY)).toBeNull();
+    expect(await auth(new Request("https://x.test/"))).toBeNull();
+  });
+
+  test("a key that an earlier env seeded stays dead when the env drops SHEETS_API_KEYS", async () => {
+    const store = createMemoryStore();
+    expect(await call(await authFromEnv(env({ [KEY]: { id: "ana", kind: "human" } }), store), KEY)).not.toBeNull();
+    expect(await call(await authFromEnv({}, store), KEY)).toBeNull();
+    expect(await call(await authFromEnv({ SHEETS_API_KEYS: "{}" }, store), KEY)).toBeNull();
+  });
+
+  test("a flag that is not 1 is a config error", async () => {
+    await expect(authFromEnv({ SHEETS_UNSAFE_TRUST_HEADERS: "true" }, createMemoryStore())).rejects.toThrow(ConfigError);
+  });
+
+  test("does not trust headers unless the unsafe flag is set", async () => {
+    const auth = await authFromEnv({}, createMemoryStore());
+    expect(await auth(new Request("https://x.test/", { headers: { "x-principal-id": "x", "x-principal-kind": "human" } }))).toBeNull();
+  });
+});
+
 describe("seeding env keys", () => {
   test("a principal that another tool wrote is refused, and left as it was", async () => {
     const store = createMemoryStore();

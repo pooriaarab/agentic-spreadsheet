@@ -94,7 +94,6 @@ function seedsOf(keys: Record<string, KeyEntry>): Seed[] {
     }
     return { key, principal: { id: who.id, kind: who.kind, scopes: scopes as string[], ...(entry.parent === undefined ? {} : { parentId: entry.parent as string }) } };
   });
-  if (seeds.length === 0) throw new ConfigError("SHEETS_API_KEYS holds no keys");
   // A chain that loops, or runs deeper than agentic-identity allows, could never sign in. Refuse it now.
   const parents = new Map(seeds.map(({ principal: p }) => [p.id, p.parentId]));
   for (const id of parents.keys()) {
@@ -172,13 +171,18 @@ export interface AuthEnv {
    * principal (`agent_of_human`, `agent_of_agent`, `user_token`) needs a `parent`: the id of another entry.
    */
   SHEETS_API_KEYS?: string;
+  /** Set to `1` to trust the x-principal-id and x-principal-kind headers. Tests only. */
   SHEETS_UNSAFE_TRUST_HEADERS?: string;
 }
 
-// The Worker has no login of its own, so it refuses to serve unless one of two things is set.
+// The Worker reads the identity store by default: a key that `agentic-identity` issued signs in with no env setting.
+// SHEETS_API_KEYS is an optional seed on top of that. Trusting headers is behind an explicit unsafe flag.
 export async function authFromEnv(env: AuthEnv, store: Store): Promise<Authenticator> {
   const keys = env.SHEETS_API_KEYS;
   const unsafe = env.SHEETS_UNSAFE_TRUST_HEADERS === "1";
+  if (env.SHEETS_UNSAFE_TRUST_HEADERS !== undefined && env.SHEETS_UNSAFE_TRUST_HEADERS !== "" && !unsafe) {
+    throw new ConfigError("SHEETS_UNSAFE_TRUST_HEADERS must be 1, or unset");
+  }
   if (keys !== undefined && keys !== "" && unsafe) {
     throw new ConfigError("set SHEETS_API_KEYS or SHEETS_UNSAFE_TRUST_HEADERS=1, not both");
   }
@@ -192,12 +196,12 @@ export async function authFromEnv(env: AuthEnv, store: Store): Promise<Authentic
     if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
       throw new ConfigError('SHEETS_API_KEYS must be JSON: {"<key>": {"id": "...", "kind": "agent"}}');
     }
+    if (Object.keys(parsed).length === 0) return forEnv(fromAuth(createStoreAuth(store)), store, []);
     const seeds = seedsOf(parsed as Record<string, KeyEntry>);
     await seedKeys(store, seeds);
     return forEnv(fromAuth(createStoreAuth(store)), store, seeds);
   }
   if (unsafe) return trustHeaders;
-  throw new ConfigError(
-    "no auth is set. Set SHEETS_API_KEYS, or set SHEETS_UNSAFE_TRUST_HEADERS=1 to trust the x-principal-id and x-principal-kind headers (tests only)",
-  );
+  // No seeds: a credential that an earlier env wrote still counts as removed, and identity-issued ones pass through.
+  return forEnv(fromAuth(createStoreAuth(store)), store, []);
 }

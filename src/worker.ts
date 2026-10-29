@@ -262,7 +262,7 @@ export async function storageFor(env: WorkerEnv): Promise<{ store: Store; blobs:
 
 let cached: { keys?: string; unsafe?: string; store: Store; auth: Promise<Authenticator> } | undefined;
 
-// The authenticator for this env and store. It throws ConfigError when the env sets no valid sign-in.
+// The authenticator for this env and store. With no key setting it reads the identity store alone. It throws ConfigError when SHEETS_API_KEYS is not valid, when both modes are set, or when the flag is not 1.
 // The keys are written into the store once for each store, not on every request. The cache holds the promise,
 // so requests that arrive together share one seed.
 async function authenticatorFor(env: WorkerEnv, store: Store): Promise<Authenticator> {

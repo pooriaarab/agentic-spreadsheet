@@ -5,11 +5,25 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
-## [0.12.0] - 2026-10-29
+## [0.13.0] - 2026-10-29
 
 ### Added
 
 - Invites and share links, on every surface. The owner of a workbook can invite a person by email or an agent by handle, revoke an invite, make and revoke share links, and list invites and links. Client: `invite`, `invites`, `uninvite`, `link`, `links`, `unlink`. CLI and MCP (`sheet_` prefix): the same names. HTTP: `GET` and `POST /:book/invites`, `DELETE /:book/invites/:invite`, `GET` and `POST /:book/links`, `DELETE /:book/links/:link`. A role is never `owner`. A list never shows an email, a link token, or a token hash.
+
+## [0.12.0] - 2026-10-29
+
+### Changed
+
+- The Worker starts with no `SHEETS_API_KEYS` and signs callers in with the `agentic-identity` store, so a key that `agentic-identity` issued works. Before, it threw a config error unless `SHEETS_API_KEYS` or `SHEETS_UNSAFE_TRUST_HEADERS` was set. `SHEETS_API_KEYS` is now an optional seed, and trusting headers stays behind `SHEETS_UNSAFE_TRUST_HEADERS=1`.
+- `SHEETS_UNSAFE_TRUST_HEADERS` with a value other than `1` is now a config error. Before, the Worker ignored it. `SHEETS_API_KEYS={}` now means no seed, and the Worker no longer stops with "holds no keys".
+- A key that you remove from the env, or drop `SHEETS_API_KEYS` altogether, stays dead. The principal records it seeded stay in the store with their scopes: revoke them with `agentic-identity` if you no longer want them.
+
+## [0.11.1] - 2026-10-29
+
+### Changed
+
+- The `agentic-identity` dependency is now `^0.9.0`, the `agentic-formats` dependency is now `^0.4.2`, and the `agentic-realtime` dependency is now `^0.4.3`. The code needs no change for them.
 
 ## [0.11.0] - 2026-10-29
 
