@@ -78,15 +78,19 @@ The root export, `agentic-spreadsheet`, also has these helpers.
 - A1 helpers. `parseCell("B2")` returns `{ col: 2, row: 2 }`, and `formatCell` turns it back into `"B2"`.
   `parseRange("A1:C3")` returns `{ c1, r1, c2, r2 }`. `colIndex("AA")` returns `27`, and `colLetters(27)`
   returns `"AA"`. `parseCell` and `parseRange` throw on bad text.
-- CSV helpers. `parseCsv(text)` returns rows of strings. `formatCsv(rows)` writes CRLF rows and marks text
-  that starts with `= + - @`. `inferCell(text)` turns one field into a number, a boolean, a formula, or text.
+- CSV helpers. `parseCsv(text)` returns rows of strings. `formatCsv(rows)` writes CRLF rows. It adds a leading
+  `'` to text that starts with `= + - @`, a tab, or a carriage return. `inferCell(text)` turns one field into
+  a number, a boolean, a formula, or text. Empty text gives `null`. With `asText` set to `true`, a leading `=`
+  is kept as text, with a `'` in front.
 - Stores. `createMemoryStore()` and `createMemoryBlobs()` keep data in memory, for tests. `createFileStore(dir)`
-  and `createFileBlobs(dir)` keep data in files, as the CLI does. A write that loses a race throws
-  `StoreConflictError`.
+  and `createFileBlobs(dir)` keep data in files, as the CLI does. A store throws `StoreConflictError` when a
+  write loses a race or cannot get its lock in time. Retry the write, and read the book first.
 - `ctxFromEnv(process.env)` builds the context that the CLI and the MCP server use. It reads `SHEET_DIR`,
   `SHEET_AS`, and `SHEET_KIND`.
 - `OPS` lists the operations that the CLI, the MCP server, and the HTTP API run. Each has a `name`, a
   `description`, the `args` names, and a `run` function. `OpError` carries the HTTP status (404, 409, or 413).
+- `SheetError` is the error that a `Workbook` method throws for a bad sheet name, column, width, or position.
+- `toBase64(bytes)` and `fromBase64(text)` convert between bytes and base64.
 - `PRINCIPAL_KINDS` lists the five principal kinds. `isMachineMade(kind)` returns `true` for every kind except
   `human`.
 - `VERSION` is the package version.
@@ -271,6 +275,8 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
 ## Limits
 
 - The grid has 16,384 columns (A to XFD) and 1,048,576 rows. A sheet name is at most 256 characters.
+  The constants `MAX_COL`, `MAX_ROW`, and `MAX_SHEET_NAME` hold these values. `MAX_TEXT` (32,767) and
+  `MAX_STRUCTURE_COUNT` (10,000) are the other two limits that the package exports.
 - A formula nested more than 100 levels deep, or with more than 1,000 chained operators, gives
   `#DEPTH!` in that cell. Other cells are not affected. A chain of cells has no depth limit.
 - A loop gives `#CIRCULAR` in every cell on the loop, whichever cell you read first.
