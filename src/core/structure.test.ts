@@ -1,5 +1,4 @@
 import { describe, expect, test } from "vitest";
-import * as Y from "yjs";
 import { Workbook, type Principal } from "./workbook.js";
 
 // Failure modes, listed before the code. Rows and columns share one
@@ -15,8 +14,7 @@ import { Workbook, type Principal } from "./workbook.js";
 // - a bad position or count passes silently, or a count of 2,000,000 passes
 // - an insert pushes a cell or a column width off the grid and drops it, or leaves the edit half done
 // - a ref that an insert pushes past the last row stays as text that no longer parses as a ref
-// - two clients insert at once and one insert is lost with no sign (the merge must be flagged)
-// - a flagged workbook still takes writes, cannot be cleared, or two inserts made in turn count as a clash
+// Edits made at the same time by two writers are in interleave.test.ts.
 
 const human: Principal = { id: "u1", kind: "human" };
 const agent: Principal = { id: "a1", kind: "agent_of_human" };
@@ -121,66 +119,6 @@ describe("insert and delete rows", () => {
     wb.writeRange("Sheet1", "B1", [["=A1048576", "=SUM(A2:A1048576)"]], human);
     wb.insertRows("Sheet1", 1, 1);
     expect(formulas(wb, "Sheet1", "B2:C2")).toEqual(["=#REF!", "=SUM(A3:A1048576)"]);
-  });
-});
-
-describe("concurrent structure edits", () => {
-  function fork(): [Workbook, Workbook] {
-    const a = book();
-    a.writeRange("Sheet1", "A1", [[1], [2], [3]], human);
-    return [a, Workbook.fromState(a.encode())];
-  }
-  const merge = (a: Workbook, b: Workbook) => {
-    Y.applyUpdate(a.doc, Y.encodeStateAsUpdate(b.doc));
-    Y.applyUpdate(b.doc, Y.encodeStateAsUpdate(a.doc));
-  };
-
-  test("two inserts made at once are flagged on both copies, and writes stop until cleared", () => {
-    const [a, b] = fork();
-    a.insertRows("Sheet1", 2, 1);
-    b.insertRows("Sheet1", 2, 1);
-    expect([a.structureConflict(), b.structureConflict()]).toEqual([false, false]);
-    merge(a, b);
-    for (const w of [a, b]) {
-      expect(w.structureConflict()).toBe(true);
-      expect(() => w.writeRange("Sheet1", "A1", [[9]], human)).toThrow(/at the same time/);
-      expect(() => w.insertRows("Sheet1", 1, 1)).toThrow(/at the same time/);
-      expect(w.readRange("Sheet1", "A1")[0][0].value).toBe(1);
-    }
-    a.acceptStructureMerge();
-    merge(a, b);
-    for (const w of [a, b]) {
-      expect(w.structureConflict()).toBe(false);
-      w.writeRange("Sheet1", "A1", [[9]], human);
-    }
-  });
-
-  test("an insert and a rename made at once are flagged too", () => {
-    const [a, b] = fork();
-    a.insertRows("Sheet1", 2, 1);
-    b.renameSheet("Sheet1", "Main");
-    merge(a, b);
-    expect(a.structureConflict()).toBe(true);
-  });
-
-  test("inserts made in turn, with a sync between, are not a clash and both apply", () => {
-    const [a, b] = fork();
-    a.insertRows("Sheet1", 2, 1);
-    merge(a, b);
-    b.insertRows("Sheet1", 2, 1);
-    merge(a, b);
-    for (const w of [a, b]) {
-      expect(w.structureConflict()).toBe(false);
-      expect(w.readRange("Sheet1", "A1:A5").flat().map((c) => c.value)).toEqual([1, null, null, 2, 3]);
-    }
-  });
-
-  test("value writes made at once never flag a clash", () => {
-    const [a, b] = fork();
-    a.writeRange("Sheet1", "B1", [[1]], human);
-    b.writeRange("Sheet1", "B2", [[2]], agent);
-    merge(a, b);
-    expect(a.structureConflict()).toBe(false);
   });
 });
 

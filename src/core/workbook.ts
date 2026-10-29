@@ -1,6 +1,8 @@
 import * as Y from "yjs";
 import { colIndex, colLetters, formatCell, MAX_COL, MAX_ROW, parseCell, parseRange, type RangePos } from "./a1.js";
-import { rewriteRefs, sameSheet, shiftSpan, type RefEdit } from "./refs.js";
+import { Layout, ROOT, type Entry } from "./order.js";
+import { hasControl, mapPlain, packRef, unpackRefs, type IdRef } from "./ref-ids.js";
+import { formatSpan, mapRefs, quoteSheet, sameSheet, type Flags } from "./refs.js";
 
 export type PrincipalKind = "human" | "agent_of_human" | "agent_of_agent" | "agent" | "user_token";
 
@@ -73,58 +75,123 @@ const FORMAT_FIELDS = ["numberFormat", "bold", "italic", "align", "color", "back
 const COLOR = /^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/i;
 
 type YSheet = Y.Map<unknown>;
-// One flat map per sheet. A cell is a few keys: `A1:c` (content), `A1:by` (the last
-// content editor), `A1:fby` (the last format editor), and `A1:fmt.<field>`. Flat keys let two writers who touch one new cell merge.
+// One flat map per sheet. A cell is a few keys: `<row id>|<col id>:c` (content), `:by` (the last
+// content editor), `:fby` (the last format editor), and `:fmt.<field>`. Flat keys let two writers
+// who touch one new cell merge. The ids never change, so a row or column edit moves no cell.
 type Cells = Y.Map<unknown>;
 type Stamp = Principal & { at: string };
 type Axis = "row" | "col";
 
-// A structure edit (insert, delete, rename) moves cells and rewrites formulas, so it cannot
-// merge with another one made at the same time. Each edit adds a log entry that names the
-// entry before it. Two edits made at once name the same parent, and the merge shows the fork.
-interface LogEntry {
-  id: string;
-  parent: string | null;
-  accepted?: true;
+const ORDER_KEY = { row: "rowOrder", col: "colOrder" } as const;
+const GONE_KEY = { row: "rowGone", col: "colGone" } as const;
+const counters = new WeakMap<Y.Doc, number>();
+// New ids, unique across every copy of the workbook: the client id of this copy, then a count.
+function newIds(doc: Y.Doc, count: number): string[] {
+  const first = counters.get(doc) ?? 0;
+  counters.set(doc, first + count);
+  return Array.from({ length: count }, (_, i) => `${doc.clientID.toString(36)}.${(first + i).toString(36)}`);
 }
 
 export class Workbook {
   readonly doc: Y.Doc;
   private readonly sheets: Y.Array<YSheet>;
-  private readonly log: Y.Array<LogEntry>;
+  // The order of each sheet's rows and columns, and formulas shown as A1 text. A change to the
+  // workbook clears both.
+  private layouts = new Map<YSheet, Partial<Record<Axis, Layout>>>();
+  private readonly shown = new Map<string, string>();
 
   constructor(doc: Y.Doc = new Y.Doc()) {
     this.doc = doc;
     this.sheets = doc.getArray("sheets");
-    this.log = doc.getArray("structure");
+    // A write to a cell or a width changes neither the order nor the names, so it keeps both caches.
+    this.sheets.observeDeep((events) => {
+      if (events.some(({ path }) => !(path.length === 2 && (path[1] === "cells" || path[1] === "widths")))) this.invalidate();
+    });
+    this.migrate();
   }
 
-  // True when two clients changed rows, columns, or sheet names at the same time. Their edits
-  // cannot both hold, so the workbook refuses writes until someone checks it and accepts it.
-  structureConflict(): boolean {
-    const entries = this.log.toArray();
-    let from = 0;
-    entries.forEach((entry, i) => entry.accepted && (from = i + 1));
-    for (let i = from; i < entries.length; i += 1) {
-      if (entries[i].parent !== (i === 0 ? null : entries[i - 1].id)) return true;
+  // True when two copies each converted an old workbook and then merged. Each copy made its own
+  // order for the same sheets, and the merge keeps one of them, so row edits made after the
+  // conversion can be lost, rows can read in the wrong place, and two sheets can share an id.
+  // Every read and write throws until the workbook is loaded again from one copy.
+  conversionClash(): boolean {
+    return this.doc.getMap("conversions").size > 1;
+  }
+
+  private usable(): void {
+    if (this.sheets.toArray().some((sheet) => !sheet.has("id"))) {
+      throw new SheetError("this workbook has a sheet in the old A1 form; load it with Workbook.fromState so it converts");
     }
-    return false;
-  }
-
-  acceptStructureMerge(): void {
-    this.record(true);
-  }
-
-  private record(accepted?: true): void {
-    const last = this.log.get(this.log.length - 1);
-    const id = `${this.doc.clientID.toString(36)}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`;
-    this.log.push([{ id, parent: last?.id ?? null, ...(accepted && { accepted }) }]);
-  }
-
-  private writable(): void {
-    if (this.structureConflict()) {
-      throw new SheetError("two clients changed rows, columns, or sheet names at the same time; check the sheet, then accept the merge");
+    if (this.conversionClash()) {
+      throw new SheetError("two copies converted an old workbook and then merged; load the workbook again from one copy");
     }
+  }
+
+  // Edits that run in one outer transaction fire no event until it ends, so each edit that changes
+  // the order or the names clears the caches itself.
+  private invalidate(): void {
+    this.layouts = new Map();
+    this.shown.clear();
+  }
+
+  // A workbook saved before cells had ids keys its cells by A1 address. Give each row and column
+  // its number as its id, and key the cells by those ids. Each copy that converts makes its own
+  // order for every sheet, and a merge keeps one of them. So the conversion tags the workbook with
+  // the client id of the copy, and two tags mean a clash. Convert once, save, then share.
+  private migrate(): void {
+    const all = this.sheets.toArray();
+    const legacy = all.filter((sheet) => !sheet.has("id"));
+    if (legacy.length === 0) return;
+    this.convert(all, legacy);
+  }
+
+  private convert(all: YSheet[], legacy: YSheet[]): void {
+    this.doc.transact(() => {
+      // The client id is in each sheet id, so sheets from two conversions never share one. The colon
+      // keeps a converted id apart from the ids that newIds makes, which use a dot.
+      const prefix = this.doc.clientID.toString(36);
+      this.doc.getMap("conversions").set(prefix, true);
+      all.forEach((sheet, i) => sheet.has("id") || sheet.set("id", `${prefix}:s${i}`));
+      const idOf = (name: string) => all.find((sheet) => sameSheet(sheet.get("name") as string, name))?.get("id") as string | undefined;
+      for (const sheet of legacy) {
+        for (const axis of ["row", "col"] as const) {
+          if (!sheet.has(ORDER_KEY[axis])) sheet.set(ORDER_KEY[axis], new Y.Array());
+          if (!sheet.has(GONE_KEY[axis])) sheet.set(GONE_KEY[axis], new Y.Map());
+        }
+        const home = sheet.get("name") as string;
+        const cells = this.cells(sheet);
+        for (const key of [...cells.keys()].sort()) {
+          const cut = key.indexOf(":");
+          let at: ReturnType<typeof parseCell>;
+          try {
+            at = parseCell(key.slice(0, cut));
+          } catch {
+            // A key that is not an address is dropped. One already in the new form is kept.
+            if (!key.includes("|")) cells.delete(key);
+            continue;
+          }
+          const value = cells.get(key);
+          cells.delete(key);
+          const carried = key.endsWith(":c") && isFormula(value) ? mapRefs(value, home, ({ text, ref, flags }) => {
+            const sheetId = idOf(ref.target);
+            const { c1, r1, c2, r2 } = ref.range;
+            return sheetId === undefined ? text : packRef({ sheet: sheetId, r1: String(r1), c1: String(c1), r2: String(r2), c2: String(c2), qualified: ref.sheet !== null, flags });
+          }) : value;
+          cells.set(`${at.row}|${at.col}${key.slice(cut)}`, carried);
+        }
+        const widths = sheet.get("widths") as Y.Map<number>;
+        for (const letters of [...widths.keys()].filter((key) => /^[A-Za-z]{1,3}$/.test(key)).sort()) {
+          const width = widths.get(letters) as number;
+          widths.delete(letters);
+          widths.set(String(colIndex(letters)), width);
+        }
+        const frozen = sheet.get("frozenRows");
+        if (typeof frozen === "number" && frozen > 0 && !sheet.has("frozen")) sheet.set("frozen", String(frozen));
+        sheet.delete("frozenRows");
+      }
+      const log = this.doc.getArray("structure");
+      log.delete(0, log.length);
+    });
   }
 
   static fromState(state: Uint8Array): Workbook {
@@ -138,90 +205,132 @@ export class Workbook {
   }
 
   sheetNames(): string[] {
+    this.usable();
     return this.sheets.toArray().map((sheet) => sheet.get("name") as string);
   }
 
   addSheet(name: string, index: number = this.sheets.length): void {
-    this.writable();
+    this.usable();
     this.checkName(name);
     const sheet: YSheet = new Y.Map();
+    sheet.set("id", newIds(this.doc, 1)[0]);
     sheet.set("name", name);
     sheet.set("cells", new Y.Map());
     sheet.set("widths", new Y.Map());
-    sheet.set("frozenRows", 0);
+    for (const axis of ["row", "col"] as const) {
+      sheet.set(ORDER_KEY[axis], new Y.Array());
+      sheet.set(GONE_KEY[axis], new Y.Map());
+    }
     this.sheets.insert(Math.max(0, Math.min(index, this.sheets.length)), [sheet]);
+    this.invalidate();
+    this.bindPending(sheet);
   }
 
+  // A rename changes the name and nothing else. A formula names its sheet by id, so it follows.
   renameSheet(name: string, to: string): void {
-    this.writable();
     const sheet = this.find(name);
-    if (!sameSheet(name, to)) this.checkName(to);
+    const renamed = !sameSheet(name, to);
+    if (renamed) this.checkName(to);
+    sheet.set("name", to);
+    this.invalidate();
+    if (renamed) this.bindPending(sheet);
+  }
+
+  // A formula may name a sheet that does not exist yet. It stays as typed, and takes the sheet
+  // once a sheet with that name appears.
+  private bindPending(sheet: YSheet): void {
+    const name = sheet.get("name") as string;
+    const lower = name.toLowerCase();
     this.doc.transact(() => {
-      this.rewriteAll((ref) =>
-        ref.sheet !== null && sameSheet(ref.target, name) ? { range: ref.range, sheet: to } : { range: ref.range },
-      );
-      sheet.set("name", to);
-      this.record();
+      for (const home of this.sheets) {
+        const cells = this.cells(home);
+        for (const [key, value] of [...cells.entries()]) {
+          if (!key.endsWith(":c") || !isFormula(value) || !value.toLowerCase().includes(lower)) continue;
+          const next = mapPlain(value, (plain) =>
+            mapRefs(plain, home.get("name") as string, ({ text, ref, flags }) =>
+              ref.sheet !== null && sameSheet(ref.target, name) ? this.pack(sheet, ref.range, ref.sheet !== null, flags) : text,
+            ),
+          );
+          if (next !== value) cells.set(key, next);
+        }
+      }
     });
   }
 
+  private pack(target: YSheet, range: RangePos, qualified: boolean, flags: Flags): string {
+    const rows = this.layout(target, "row");
+    const cols = this.layout(target, "col");
+    const { c1, r1, c2, r2 } = range;
+    // A range names places, a single ref names a row and a column.
+    const name = flags.isRange ? (layout: Layout, at: number) => layout.key(at) : (layout: Layout, at: number) => layout.id(at);
+    return packRef({ sheet: target.get("id") as string, r1: name(rows, r1), c1: name(cols, c1), r2: name(rows, r2), c2: name(cols, c2), qualified, flags });
+  }
+
+  // A formula that points at the deleted sheet reads as #REF!.
   deleteSheet(name: string): void {
-    this.writable();
     const sheet = this.find(name);
     if (this.sheets.length === 1) throw new SheetError("cannot delete the last sheet");
-    this.doc.transact(() => {
-      this.rewriteAll((ref) => (sameSheet(ref.target, name) ? null : { range: ref.range }));
-      this.sheets.delete(this.sheets.toArray().indexOf(sheet), 1);
-      this.record();
-    });
+    this.sheets.delete(this.sheets.toArray().indexOf(sheet), 1);
+    this.invalidate();
   }
 
   sheetInfo(name: string): SheetInfo {
     const sheet = this.find(name);
+    const rows = this.layout(sheet, "row");
+    const cols = this.layout(sheet, "col");
+    const columnWidths: Record<string, number> = {};
+    for (const [id, width] of (sheet.get("widths") as Y.Map<number>).entries()) {
+      const at = cols.position(id);
+      if (at !== null && at <= MAX_COL) columnWidths[colLetters(at)] = width;
+    }
+    const boundary = sheet.get("frozen");
+    const place = typeof boundary === "string" ? rows.placeOf(boundary) : null;
     return {
       name: sheet.get("name") as string,
-      frozenRows: sheet.get("frozenRows") as number,
-      columnWidths: (sheet.get("widths") as Y.Map<number>).toJSON(),
+      frozenRows: place === null ? 0 : place.visible ? place.before + 1 : place.before,
+      columnWidths,
     };
   }
 
   cellCount(name: string): number {
-    return usedAddresses(this.cells(this.find(name))).size;
+    return this.used(this.find(name)).length;
   }
 
   // The range from A1 to the last used cell, or null for an empty sheet.
   extent(name: string): string | null {
     const last = { col: 0, row: 0 };
-    for (const addr of usedAddresses(this.cells(this.find(name)))) {
-      const at = parseCell(addr);
+    for (const at of this.used(this.find(name))) {
       last.col = Math.max(last.col, at.col);
       last.row = Math.max(last.row, at.row);
     }
     return last.col === 0 ? null : `A1:${formatCell(last)}`;
   }
 
+  // Rows from the top stay in view. The sheet keeps the key of the place of the last frozen row, so
+  // an insert above it, or a delete of a row in it, moves the line with the rows.
   setFrozenRows(name: string, rows: number): void {
-    this.writable();
     if (!Number.isInteger(rows) || rows < 0 || rows > MAX_ROW) throw new SheetError(`invalid frozen rows ${rows}`);
-    this.find(name).set("frozenRows", rows);
+    const sheet = this.find(name);
+    if (rows === 0) sheet.delete("frozen");
+    else sheet.set("frozen", this.layout(sheet, "row").key(rows));
+    this.invalidate();
   }
 
   setColumnWidth(name: string, column: string, width: number): void {
-    this.writable();
     const letters = column.toUpperCase();
     if (!/^[A-Z]{1,3}$/.test(letters) || colIndex(letters) > MAX_COL) throw new SheetError(`invalid column "${column}"`);
     if (typeof width !== "number" || !Number.isFinite(width) || width <= 0) throw new SheetError(`invalid column width ${width}`);
-    (this.find(name).get("widths") as Y.Map<number>).set(letters, width);
+    const sheet = this.find(name);
+    (sheet.get("widths") as Y.Map<number>).set(this.layout(sheet, "col").id(colIndex(letters)), width);
   }
 
   readRange(name: string, range: string): Cell[][] {
-    const cells = this.cells(this.find(name));
+    const sheet = this.find(name);
+    const cells = this.cells(sheet);
     const span = this.span(range);
-    return Array.from({ length: span.r2 - span.r1 + 1 }, (_, dr) =>
-      Array.from({ length: span.c2 - span.c1 + 1 }, (_, dc) =>
-        toCell(cells, formatCell({ col: span.c1 + dc, row: span.r1 + dr })),
-      ),
-    );
+    const rows = this.layout(sheet, "row").ids(span.r1, span.r2 - span.r1 + 1);
+    const cols = this.layout(sheet, "col").ids(span.c1, span.c2 - span.c1 + 1);
+    return rows.map((row) => cols.map((col) => toCell(cells, `${row}|${col}`, (formula) => this.show(formula))));
   }
 
   // Tell a listener which cells changed content, or that anything may have changed. A change to
@@ -234,10 +343,17 @@ export class Workbook {
         const { path } = event;
         const keys = event instanceof Y.YMapEvent ? [...event.keysChanged] : [];
         if (path.length === 2 && path[1] === "cells") {
-          const sheet = this.sheets.get(path[0] as number)?.get("name") as string | undefined;
+          const sheet = this.sheets.get(path[0] as number);
           if (sheet === undefined) return listener({ all: true });
-          for (const key of keys) if (key.endsWith(":c")) cells.push({ sheet, address: key.slice(0, -2) });
-        } else if (path.length === 1 ? keys.includes("name") : path[1] !== "widths") {
+          const rows = this.layout(sheet, "row");
+          const cols = this.layout(sheet, "col");
+          for (const key of keys) {
+            if (!key.endsWith(":c")) continue;
+            const [row, col] = key.slice(0, -2).split("|");
+            const at = { row: rows.position(row), col: cols.position(col) };
+            if (at.row !== null && at.col !== null && at.row <= MAX_ROW && at.col <= MAX_COL) cells.push({ sheet: sheet.get("name") as string, address: formatCell({ col: at.col, row: at.row }) });
+          }
+        } else if (path.length === 1 ? keys.some((key) => key !== "frozen") : path[1] !== "widths") {
           return listener({ all: true });
         }
       }
@@ -249,16 +365,17 @@ export class Workbook {
 
   // A cell's content and nothing else. The formula engine reads cells through this.
   raw(name: string, col: number, row: number): { value: CellValue | null; formula: string | null } {
-    const content = this.cells(this.find(name)).get(`${formatCell({ col, row })}:c`);
+    const sheet = this.find(name);
+    const content = this.cells(sheet).get(`${this.layout(sheet, "row").id(row)}|${this.layout(sheet, "col").id(col)}:c`);
     const valid = typeof content === "string" || typeof content === "boolean" || (typeof content === "number" && Number.isFinite(content));
-    const formula = valid && isFormula(content) ? content : null;
+    const formula = valid && isFormula(content) ? this.show(content) : null;
     return { value: valid && formula === null ? (content as CellValue) : null, formula };
   }
 
   // Write a grid of values, or formulas, with its top-left corner at `anchor`.
   writeRange(name: string, anchor: string, rows: CellInput[][], by: Principal): void {
-    this.writable();
-    const cells = this.cells(this.find(name));
+    const sheet = this.find(name);
+    const cells = this.cells(sheet);
     const start = parseCell(anchor);
     let width = 0;
     for (const line of rows) {
@@ -269,23 +386,29 @@ export class Workbook {
       throw new SheetError(`write at ${anchor} runs past the grid`);
     }
     checkPrincipal(by);
+    const rowIds = this.layout(sheet, "row").ids(start.row, rows.length);
+    const colIds = this.layout(sheet, "col").ids(start.col, width);
     this.doc.transact(() => {
       rows.forEach((line, dr) =>
-        line.forEach((value, dc) => putValue(cells, formatCell({ col: start.col + dc, row: start.row + dr }), value, by)),
+        line.forEach((value, dc) =>
+          putValue(cells, `${rowIds[dr]}|${colIds[dc]}`, typeof value === "string" && isFormula(value) ? this.store(value, sheet) : value, by),
+        ),
       );
     });
   }
 
   setFormat(name: string, range: string, patch: CellFormatPatch, by: Principal): void {
-    this.writable();
-    const cells = this.cells(this.find(name));
+    const sheet = this.find(name);
+    const cells = this.cells(sheet);
     const span = this.span(range, MAX_FORMAT_CELLS);
     checkPatch(patch);
     checkPrincipal(by);
+    const rows = this.layout(sheet, "row").ids(span.r1, span.r2 - span.r1 + 1);
+    const cols = this.layout(sheet, "col").ids(span.c1, span.c2 - span.c1 + 1);
     this.doc.transact(() => {
-      for (let row = span.r1; row <= span.r2; row += 1) {
-        for (let col = span.c1; col <= span.c2; col += 1) {
-          const addr = formatCell({ col, row });
+      for (const row of rows) {
+        for (const col of cols) {
+          const addr = `${row}|${col}`;
           for (const [field, value] of Object.entries(patch)) {
             if (value === null) cells.delete(`${addr}:fmt.${field}`);
             else if (value !== undefined) cells.set(`${addr}:fmt.${field}`, value);
@@ -296,8 +419,9 @@ export class Workbook {
     });
   }
 
-  // Structure. `at` is the 1-based row or column. Refs to moved cells follow them. Refs to
-  // deleted cells become #REF!. An insert that would push a cell or a width off the grid is refused.
+  // Structure. `at` is the 1-based row or column. Each edit changes the order of the ids and
+  // nothing else, so edits made at the same time all apply. Refs to moved cells follow them. Refs
+  // to deleted cells read as #REF!. An insert that would push a cell or a width off the grid is refused.
 
   insertRows(name: string, at: number, count = 1): void {
     this.restructure(name, "row", "insert", at, count);
@@ -315,76 +439,129 @@ export class Workbook {
     this.restructure(name, "col", "delete", at, count);
   }
 
-  private restructure(name: string, axis: Axis, op: "insert" | "delete", at: number, count: number): void {
-    this.writable();
-    const sheet = this.find(name);
+  // Move `count` rows from `from` so they sit before the row now at `to`. Their cells, and refs to
+  // them, go with them.
+  moveRows(name: string, from: number, count: number, to: number): void {
+    this.move(name, "row", from, count, to);
+  }
+
+  moveCols(name: string, from: number, count: number, to: number): void {
+    this.move(name, "col", from, count, to);
+  }
+
+  private check(axis: Axis, at: number, count: number): number {
     const max = axis === "row" ? MAX_ROW : MAX_COL;
     if (!Number.isInteger(at) || !Number.isInteger(count) || at < 1 || at > max || count < 1 || count > MAX_STRUCTURE_COUNT) {
       throw new SheetError(`invalid ${axis} position ${at} or count ${count}`);
     }
-    const cells = this.cells(sheet);
+    return max;
+  }
+
+  private restructure(name: string, axis: Axis, op: "insert" | "delete", at: number, count: number): void {
+    const max = this.check(axis, at, count);
+    const sheet = this.find(name);
+    const layout = this.layout(sheet, axis);
+    const order = sheet.get(ORDER_KEY[axis]) as Y.Array<Entry>;
     const widths = sheet.get("widths") as Y.Map<number>;
     if (op === "insert") {
       let last = 0;
-      for (const addr of usedAddresses(cells)) last = Math.max(last, parseCell(addr)[axis]);
-      if (axis === "col") for (const letters of widths.keys()) last = Math.max(last, colIndex(letters));
+      for (const used of this.used(sheet)) last = Math.max(last, used[axis]);
+      if (axis === "col") for (const id of widths.keys()) last = Math.max(last, layout.position(id) ?? 0);
       if (last >= at && last + count > max) throw new SheetError(`insert would push cells past the edge of the grid`);
+      const anchor = at === 1 ? ROOT : layout.key(at - 1);
+      // Siblings read newest first, so the rows go in last to first.
+      order.push(newIds(this.doc, count).reverse().map((id) => ({ k: id, id, a: anchor })));
+      this.invalidate();
+      return;
     }
-    const shift = (lo: number, hi: number): [number, number] | null => {
-      const moved = shiftSpan(lo, hi, op, at, count);
-      return moved === null || moved[0] > max ? null : [moved[0], Math.min(moved[1], max)];
-    };
+    const dead = new Set(layout.ids(at, count));
+    const cells = this.cells(sheet);
+    const gone = sheet.get(GONE_KEY[axis]) as Y.Map<true>;
     this.doc.transact(() => {
-      this.rewriteAll((ref) => {
-        if (!sameSheet(ref.target, name)) return { range: ref.range };
-        const { c1, r1, c2, r2 } = ref.range;
-        const moved = axis === "row" ? shift(r1, r2) : shift(c1, c2);
-        if (moved === null) return null;
-        return { range: axis === "row" ? { c1, c2, r1: moved[0], r2: moved[1] } : { r1, r2, c1: moved[0], c2: moved[1] } };
-      });
-      const moves: { from: string; to: string | null; value: unknown }[] = [];
-      for (const [from, value] of cells.entries()) {
-        const cut = from.indexOf(":");
-        const pos = parseCell(from.slice(0, cut));
-        const moved = shift(pos[axis], pos[axis]);
-        if (moved !== null && moved[0] === pos[axis]) continue;
-        const to = moved === null ? null : `${formatCell({ ...pos, [axis]: moved[0] })}${from.slice(cut)}`;
-        moves.push({ from, to, value });
+      for (const id of dead) gone.set(id, true);
+      for (const key of [...cells.keys()]) {
+        const [row, col] = key.slice(0, key.indexOf(":")).split("|");
+        if (dead.has(axis === "row" ? row : col)) cells.delete(key);
       }
-      for (const move of moves) cells.delete(move.from);
-      for (const move of moves) if (move.to !== null) cells.set(move.to, move.value);
-      if (axis === "col") this.moveWidths(widths, shift);
-      else {
-        const frozen = sheet.get("frozenRows") as number;
-        if (op === "insert") sheet.set("frozenRows", at <= frozen ? Math.min(frozen + count, MAX_ROW) : frozen);
-        else sheet.set("frozenRows", frozen - Math.max(0, Math.min(at + count - 1, frozen) - at + 1));
-      }
-      this.record();
+      if (axis === "col") for (const id of dead) widths.delete(id);
+    });
+    this.invalidate();
+  }
+
+  private move(name: string, axis: Axis, from: number, count: number, to: number): void {
+    const max = this.check(axis, from, count);
+    if (!Number.isInteger(to) || to < 1 || to > max + 1) throw new SheetError(`invalid ${axis} position ${to}`);
+    if (to >= from && to <= from + count) return;
+    const sheet = this.find(name);
+    const layout = this.layout(sheet, axis);
+    const ids = layout.ids(from, count);
+    const keys = newIds(this.doc, count);
+    let after = to === 1 ? ROOT : layout.key(to - 1);
+    const entries = ids.map((id, i) => {
+      const entry = { k: keys[i], id, a: after };
+      after = keys[i];
+      return entry;
+    });
+    (sheet.get(ORDER_KEY[axis]) as Y.Array<Entry>).push(entries);
+    this.invalidate();
+  }
+
+  private layout(sheet: YSheet, axis: Axis): Layout {
+    let built = this.layouts.get(sheet);
+    if (built === undefined) this.layouts.set(sheet, (built = {}));
+    const order = sheet.get(ORDER_KEY[axis]) as Y.Array<unknown> | undefined;
+    const gone = sheet.get(GONE_KEY[axis]) as Y.Map<unknown> | undefined;
+    return (built[axis] ??= new Layout(order?.toArray() ?? [], new Set(gone?.keys() ?? [])));
+  }
+
+  // The positions of the cells that hold anything and sit on a row and a column that show, inside
+  // the grid. Two inserts made at once can push a cell past the last row. It stays in the workbook,
+  // unread, until rows go.
+  private used(sheet: YSheet): { row: number; col: number }[] {
+    const rows = this.layout(sheet, "row");
+    const cols = this.layout(sheet, "col");
+    const seen = new Set<string>();
+    const out: { row: number; col: number }[] = [];
+    for (const key of this.cells(sheet).keys()) {
+      const base = key.slice(0, key.indexOf(":"));
+      if (seen.has(base)) continue;
+      seen.add(base);
+      const [rowId, colId] = base.split("|");
+      const row = rows.position(rowId);
+      const col = cols.position(colId);
+      if (row !== null && col !== null && row <= MAX_ROW && col <= MAX_COL) out.push({ row, col });
+    }
+    return out;
+  }
+
+  // Store a formula typed as A1 text with each ref turned into ids. A ref to a sheet that does not exist stays as typed.
+  private store(formula: string, home: YSheet): string {
+    return mapRefs(formula, home.get("name") as string, ({ text, ref, flags }) => {
+      const target = ref.sheet === null ? home : this.sheets.toArray().find((s) => sameSheet(s.get("name") as string, ref.target));
+      return target === undefined ? text : this.pack(target, ref.range, ref.sheet !== null, flags);
     });
   }
 
-  private moveWidths(widths: Y.Map<number>, shift: (lo: number, hi: number) => [number, number] | null): void {
-    const entries = [...widths.entries()];
-    for (const [letters] of entries) widths.delete(letters);
-    for (const [letters, width] of entries) {
-      const moved = shift(colIndex(letters), colIndex(letters));
-      if (moved !== null) widths.set(colLetters(moved[0]), width);
-    }
+  // A stored formula as A1 text, for the rows and columns as they stand now.
+  private show(stored: string): string {
+    if (!stored.includes("\u0001")) return stored;
+    let text = this.shown.get(stored);
+    if (text === undefined) this.shown.set(stored, (text = unpackRefs(stored, (ref) => this.showRef(ref))));
+    return text;
   }
 
-  private rewriteAll(edit: RefEdit): void {
-    for (const sheet of this.sheets) {
-      const home = sheet.get("name") as string;
-      const cells = this.cells(sheet);
-      for (const [key, formula] of [...cells.entries()]) {
-        if (!key.endsWith(":c") || !isFormula(formula)) continue;
-        const next = rewriteRefs(formula, home, edit);
-        if (next !== formula) cells.set(key, next);
-      }
-    }
+  private showRef(ref: IdRef): string {
+    const sheet = this.sheets.toArray().find((s) => s.get("id") === ref.sheet);
+    if (sheet === undefined) return "#REF!";
+    const rows = reach(this.layout(sheet, "row"), ref.r1, ref.r2, MAX_ROW, ref.flags.isRange);
+    const cols = reach(this.layout(sheet, "col"), ref.c1, ref.c2, MAX_COL, ref.flags.isRange);
+    if (rows === null || cols === null) return "#REF!";
+    const prefix = ref.qualified ? `${quoteSheet(sheet.get("name") as string)}!` : "";
+    return prefix + formatSpan({ c1: cols[0], c2: cols[1], r1: rows[0], r2: rows[1] }, ref.flags);
   }
 
   private find(name: string): YSheet {
+    this.usable();
     const sheet = this.sheets.toArray().find((s) => sameSheet(s.get("name") as string, name));
     if (sheet === undefined) throw new SheetError(`no sheet "${name}"`);
     return sheet;
@@ -410,6 +587,18 @@ export class Workbook {
   }
 }
 
+// The positions a ref spans on one axis. A range names each end by a place. An end whose row is
+// deleted or moved away leaves the range, which then stops at the nearest row that shows. A span with no row left, or one that starts past the edge of the grid, has none. A span
+// that reaches past the edge is cut there.
+function reach(layout: Layout, from: string, to: string, max: number, range: boolean): [number, number] | null {
+  const a = range ? layout.placeOf(from) : layout.place(from);
+  const b = range ? layout.placeOf(to) : layout.place(to);
+  if (a === null || b === null) return null;
+  const lo = a.before + 1;
+  const hi = b.visible ? b.before + 1 : b.before;
+  return lo > max || hi < lo ? null : [lo, Math.min(hi, max)];
+}
+
 function checkPrincipal(by: Principal): void {
   if (by.id === "" || !PRINCIPAL_KINDS.includes(by.kind)) throw new SheetError("invalid principal");
 }
@@ -421,6 +610,7 @@ function checkValue(value: unknown): void {
   if (typeof value === "number" && Number.isFinite(value)) return;
   if (typeof value !== "string") throw new SheetError("invalid cell value");
   if (isFormula(value) && value.length > MAX_FORMULA) throw new SheetError(`formula longer than ${MAX_FORMULA} characters`);
+  if (isFormula(value) && hasControl(value)) throw new SheetError("a formula may not hold a control character");
   if (value.length > MAX_TEXT) throw new SheetError(`text longer than ${MAX_TEXT} characters`);
 }
 
@@ -435,13 +625,6 @@ function checkPatch(patch: CellFormatPatch): void {
       : typeof value === "string" && COLOR.test(value);
     if (!ok) throw new SheetError(`invalid ${field === "color" || field === "background" ? `${field} color` : field}`);
   }
-}
-
-// The distinct cell addresses that hold any key.
-function usedAddresses(cells: Cells): Set<string> {
-  const used = new Set<string>();
-  for (const key of cells.keys()) used.add(key.slice(0, key.indexOf(":")));
-  return used;
 }
 
 function stamp(cells: Cells, key: string, by: Principal): void {
@@ -474,7 +657,7 @@ function putValue(cells: Cells, addr: string, value: CellInput, by: Principal): 
 const toAuthor = (by: Stamp | undefined): Author | null =>
   by === undefined ? null : { id: by.id, kind: by.kind, machine: isMachineMade(by.kind), at: by.at };
 
-function toCell(cells: Cells, addr: string): Cell {
+function toCell(cells: Cells, addr: string, show: (formula: string) => string): Cell {
   const by = cells.get(`${addr}:by`) as Stamp | undefined;
   const fby = cells.get(`${addr}:fby`) as Stamp | undefined;
   if (by === undefined && fby === undefined) return { value: null, formula: null, format: {}, author: null, formatAuthor: null };
@@ -485,7 +668,7 @@ function toCell(cells: Cells, addr: string): Cell {
     const value = cells.get(`${addr}:fmt.${field}`);
     if (value !== undefined) format[field] = value;
   }
-  const formula = valid && isFormula(content) ? content : null;
+  const formula = valid && isFormula(content) ? show(content) : null;
   return {
     value: valid && formula === null ? (content as CellValue) : null,
     formula,

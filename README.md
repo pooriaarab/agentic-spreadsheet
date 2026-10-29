@@ -85,8 +85,15 @@ A request body is at most 5 MB. `GET /health` needs no key.
   of a cell are separate keys, so two writers on one new cell keep both edits.
   If two writers set the same field, the later write wins.
 - Many sheets in a set order. Add, rename, and delete sheets.
-- Sparse cells keyed by A1 coordinates. Each cell holds a value or a formula, plus a format.
+- Sparse cells. Each cell holds a value or a formula, plus a format.
   Text is at most 32,767 characters. A formula is at most 8,192.
+- Every row and column has an id that never changes. A cell is keyed by the ids of its row and its
+  column, and a formula keeps its refs as ids. An A1 address is the position of those ids, so the SDK,
+  the CLI, the MCP server, and the HTTP API take and return A1. Insert, delete, and move change the
+  order of the ids and nothing else. Two writers who edit one sheet at the same time lose nothing,
+  and a write lands on the row it was meant for, whatever the other writer inserts, deletes, or moves.
+  `moveRows` and `moveCols` are in the SDK.
+- A workbook saved by an older version, with A1 keys, converts when it loads.
 - Column widths and frozen rows.
 - Insert and delete rows and columns. Formula refs follow the moved cells.
   A ref to a deleted cell becomes `#REF!`. A range shrinks or grows to match.
@@ -115,10 +122,22 @@ A request body is at most 5 MB. `GET /health` needs no key.
 - A change to a cell finds the formulas that read it through a range by a scan of all ranges on
   that sheet. A sheet with very many range formulas pays for that scan on each edit.
 - Ref rewriting does not handle whole-column refs such as `A:A`.
-- Insert, delete, and rename need one writer at a time. They move cells and rewrite formulas,
-  and that does not merge. If two clients do it at once, `structureConflict()` turns true after the
-  merge and the workbook refuses writes until someone calls `acceptStructureMerge()`.
-  A value write that races an insert lands at the old address, and nothing flags it.
+- A write to a row that another writer deletes goes with the row. Two writers who move one row at
+  once get one place for it, the same on both copies.
+- Two copies that each convert an old A1-keyed workbook, and then merge, are flagged:
+  `conversionClash()` is true and every read and write throws, because each copy made its own order
+  for the sheets and the merge keeps one. Load the workbook again from one copy, or better, convert
+  once, save it, and then share it. The CLI and the Worker convert under the store lock and save,
+  so a stored workbook converts once. A copy of one old file converted on two machines meets this case.
+  A clash that was saved cannot be repaired in place. Restore the workbook from a copy saved before it.
+  Old A1-keyed state that a sync provider delivers after the workbook is made is refused with an
+  error. Load it with `Workbook.fromState` instead.
+- A single ref follows a moved row. A range keeps the rows that stay between its ends: a row that
+  moves out of a range leaves it, and a row that moves in joins it.
+- Two inserts made at once can push a cell past the last row. The workbook keeps the cell, but no
+  read, export, or count sees it until rows are deleted.
+- A formula that names a sheet that does not exist yet takes the sheet when it is added. A formula
+  written by one writer while another adds that sheet is not bound until the next rename or add.
 - Two clients that add a sheet with the same name while offline both succeed.
   The merged workbook then holds two sheets with one name.
 - The Worker keeps workbooks in memory, in one isolate. A restart loses them, and two isolates do not
