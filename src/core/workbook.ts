@@ -64,7 +64,7 @@ export class SheetError extends Error {
 const MAX_RANGE_CELLS = 1_000_000;
 const MAX_FORMAT_CELLS = 100_000;
 const MAX_STRUCTURE_COUNT = 10_000;
-const MAX_TEXT = 32_767;
+export const MAX_TEXT = 32_767;
 const MAX_FORMULA = 8_192;
 const BAD_SHEET_NAME = /[[\]:*?/\\!']/;
 const FORMAT_FIELDS = ["numberFormat", "bold", "italic", "align", "color", "background"] as const;
@@ -209,6 +209,14 @@ export class Workbook {
         toCell(cells, formatCell({ col: span.c1 + dc, row: span.r1 + dr })),
       ),
     );
+  }
+
+  // A cell's content and nothing else. The formula engine reads cells through this.
+  raw(name: string, col: number, row: number): { value: CellValue | null; formula: string | null } {
+    const content = this.cells(this.find(name)).get(`${formatCell({ col, row })}:c`);
+    const valid = typeof content === "string" || typeof content === "boolean" || (typeof content === "number" && Number.isFinite(content));
+    const formula = valid && isFormula(content) ? content : null;
+    return { value: valid && formula === null ? (content as CellValue) : null, formula };
   }
 
   // Write a grid of values, or formulas, with its top-left corner at `anchor`.

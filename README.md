@@ -7,8 +7,8 @@
 
 Spreadsheets with formulas that people and agents edit together.
 
-> Status: early. Only the workbook model works today. It is not on npm yet.
-> The formula engine, CLI, MCP server, and HTTP API are planned.
+> Status: early. The workbook model and the formula engine work. It is not on npm yet.
+> The CLI, MCP server, and HTTP API are planned.
 
 ## Install
 
@@ -19,13 +19,13 @@ npm install agentic-spreadsheet
 ## Quick start
 
 ```ts
-import { Workbook } from "agentic-spreadsheet";
+import { Engine, Workbook } from "agentic-spreadsheet";
 
 const me = { id: "user-1", kind: "human" } as const;
 const wb = new Workbook();
 wb.addSheet("Sheet1");
 wb.writeRange("Sheet1", "A1", [[1], [2], ["=SUM(A1:A2)"]], me);
-console.log(wb.readRange("Sheet1", "A1:A4"));
+console.log(new Engine(wb).values("Sheet1", "A1:A3")); // [[1], [2], [3]]
 ```
 
 ## Features
@@ -40,6 +40,13 @@ console.log(wb.readRange("Sheet1", "A1:A4"));
 - Insert and delete rows and columns. Formula refs follow the moved cells.
   A ref to a deleted cell becomes `#REF!`. A range shrinks or grows to match.
   An insert that would push a cell off the grid is refused. A count is at most 10,000.
+- A formula engine reads the workbook. It has `+ - * / ^ & %`, comparisons, and cross-sheet refs.
+  It returns `#REF!`, `#DIV/0!`, `#NAME?`, `#VALUE!`, `#NUM!`, `#N/A`, `#CIRCULAR`, and `#DEPTH!`.
+- Functions: `IF`, `IFS`, `IFERROR`, `SUM`, `AVERAGE`, `MIN`, `MAX`, `COUNT`, `COUNTA`, `COUNTIF(S)`,
+  `SUMIF(S)`, `VLOOKUP`, `XLOOKUP`, `INDEX`, `MATCH`, `AND`, `OR`, `NOT`, `ROUND`, `ROUNDUP`,
+  `ROUNDDOWN`, `ABS`, `CONCAT`, `TEXT`, `LEFT`, `RIGHT`, `MID`, `LEN`, `UPPER`, `LOWER`, `TRIM`,
+  `DATE`, `TODAY`, `NOW`. Other names come from `@formulajs/formulajs` and are untested here.
+  Blank cells in a range are skipped, as in a spreadsheet app. `MUNIT` and `EXPAND` return `#NAME?`.
 - Read a range. Write a range of values or formulas.
 - Every cell keeps the principal that last edited it. The kind is one of
   `human`, `agent_of_human`, `agent_of_agent`, `agent`, or `user_token`.
@@ -47,7 +54,10 @@ console.log(wb.readRange("Sheet1", "A1:A4"));
 
 ## Limits
 
-- Formulas are stored as text. Nothing evaluates them yet.
+- The engine keeps no cache between calls, so there is no incremental recalc yet.
+  A chain of more than 400 dependent cells, a formula nested more than 100 levels deep, and a formula
+  with more than 1,000 chained operators give `#DEPTH!` in that cell. Other cells are not affected.
+  A loop gives `#CIRCULAR` in every cell of the loop, whichever cell you read first.
 - Ref rewriting does not handle whole-column refs such as `A:A`.
 - Insert, delete, and rename need one writer at a time. They move cells and rewrite formulas,
   and that does not merge. If two clients do it at once, `structureConflict()` turns true after the

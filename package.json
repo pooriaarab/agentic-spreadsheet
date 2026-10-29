@@ -51,6 +51,7 @@
     "ci:local": "npm run build && npm run typecheck && npm test"
   },
   "dependencies": {
+    "@formulajs/formulajs": "^4.6.1",
     "yjs": "^13.6.0"
   },
   "devDependencies": {
