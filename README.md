@@ -73,7 +73,7 @@ read the book before you send it again.
 
 ### Other exports
 
-The root export, `agentic-spreadsheet`, also has these helpers.
+The root export, `agentic-spreadsheet`, also exports these names.
 
 - A1 helpers. `parseCell("B2")` returns `{ col: 2, row: 2 }`, and `formatCell` turns it back into `"B2"`.
   `parseRange("A1:C3")` returns `{ c1, r1, c2, r2 }`. `colIndex("AA")` returns `27`, and `colLetters(27)`
