@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ import { fromBase64, toBase64 } from "./core/bytes.js";
 import { createMemoryBlobs, createMemoryStore } from "agentic-identity";
 import { createAccess } from "./access.js";
 import { createApp } from "./worker.js";
+import { OPS } from "./ops.js";
 import { legacyState } from "./testing/legacy.js";
 
 // A stored workbook in the A1-keyed form goes through the real CLI, the real MCP server over stdio,
@@ -21,6 +22,7 @@ import { legacyState } from "./testing/legacy.js";
 // - a read saves the conversion, so a plain read writes to the store
 // - the first write does not save the converted form, or loses a cell or a formula on the way
 // - a later insert still rewrites refs wrongly, or the CLI, MCP, and Worker give different answers
+// - a read command other than `read` saves the conversion, or a new read command is never checked
 // - a stored workbook with an unaccepted old fork reads as good data, or fails with a stack trace
 
 const CLI = fileURLToPath(new URL("../dist/cli.js", import.meta.url));
@@ -68,6 +70,24 @@ describe("a stored old workbook", () => {
     expect(after.values).toEqual([[10, 35], [null, null], [20, "200A1"], ["text", null]]);
     expect(after.formulas[2][1]).toBe('=$A$1*A3&"A1"');
     expect(cli("read", "old", "C6:C6").json().formulas).toEqual([["=A3"]]);
+  });
+
+  // Every command marked read-only runs here. A new read command with no row fails the first check.
+  const READS: Record<string, string[]> = { list: ["list"], read: ["read", "old", "A1:B3"], export: ["export", "old"] };
+  test("every read command saves nothing", async () => {
+    expect(Object.keys(READS).sort()).toEqual(OPS.filter((op) => op.readOnly).map((op) => op.name).sort());
+    putFile("old", legacyState());
+    // The bytes of the stored file and the files in the directory, before any read.
+    const file = join(dir, "workbooks", "old.json");
+    const before = { bytes: readFileSync(file, "utf8"), files: readdirSync(dir, { recursive: true }).sort() };
+    for (const [name, args] of Object.entries(READS)) {
+      const r = cli(...args);
+      expect([name, r.code, r.err]).toEqual([name, 0, ""]);
+      expect([name, existsSync(join(dir, "store.json"))]).toEqual([name, false]);
+      const sheets = await stored("old");
+      expect([name, sheets.length, sheets.every((sheet) => sheet.id === undefined)]).toEqual([name, 2, true]);
+      expect([name, readFileSync(file, "utf8"), readdirSync(dir, { recursive: true }).sort()]).toEqual([name, before.bytes, before.files]);
+    }
   });
 
   test("the MCP server and the Worker app give the same answers as the CLI", async () => {
