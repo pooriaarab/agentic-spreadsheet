@@ -162,7 +162,9 @@ it. `.dev.vars` stays out of git. Data lives in memory, so a restart empties it.
   WebSocket. Use HTTPS, and keep Worker logs private. There is no sign-in page for a person
   yet: the key is the sign-in.
 - **Hosting.** The npm package ships the UI files in `dist/ui`, but not the Worker that serves them.
-  A host can serve `dist/ui` at the root of an origin, because the UI calls the API on its own origin.
+  Read the files by path, from `node_modules/agentic-spreadsheet/dist/ui`. `exports` does not list them.
+  A host must serve them at the root of an origin, because the asset paths start at `/`, and the UI calls
+  the API on its own origin.
   The host answers `/api/v1/sheets` and `/health` with the default export of `agentic-spreadsheet/worker`.
   Presence does not work this way yet. Its socket needs `agentic-realtime` and a `SyncRoom` Durable Object,
   and `roomGrant` checks roles only in the Worker's own in-memory store. For presence, run the Worker from
