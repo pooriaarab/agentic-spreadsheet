@@ -128,8 +128,9 @@ If the Worker fails after it saves a new workbook and before it records the owne
 
 ## UI
 
-A small web UI comes with the Worker in this repo, in `src/ui-worker.ts`. It uses the `agentic-design` package for tokens, controls, and
-dialogs, the typed client (`./client`) for every call, and a presence room from `agentic-realtime`.
+A small web UI comes with the Worker in this repo, in `src/ui-worker.ts`. It uses the `agentic-design`
+package for tokens, controls, and dialogs, the typed client (`./client`) for every call, and a presence
+room from `agentic-realtime`.
 It has a list of workbooks, a sheet bar, a grid with A1 cells and a formula bar, edits for values
 and formulas, add and remove for rows, columns, and sheets, and light and dark themes.
 
@@ -170,7 +171,7 @@ it. `.dev.vars` stays out of git. Data lives in memory, so a restart empties it.
   an `env` with `SHEETS_API_KEYS`, or the Worker answers 500. Data lives in memory in that isolate.
   Presence does not work this way yet. Its socket needs `agentic-realtime` and a `SyncRoom` Durable Object,
   and `roomGrant` checks roles only in the Worker's own in-memory store. For presence, run the Worker from
-  a checkout, as `src/ui-worker.ts` does.
+  a checkout, as `src/ui-worker.ts` does. Without presence, the UI still works and shows Offline.
 
 ## Features
 
