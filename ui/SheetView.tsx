@@ -189,7 +189,7 @@ export function SheetView({ client, book, title, changes, presence, connection, 
   const sizes: Sizes = allSizes[active ?? ""] ?? { cols: {}, rows: {} };
   const colWidth = (col: number) => sizes.cols[col] ?? COL_WIDTH;
   const rowHeight = (row: number) => sizes.rows[row] ?? ROW_HEIGHT;
-  const resize = (axis: "cols" | "rows", index: number, size?: number) => {
+  const resize = (axis: "cols" | "rows", index: number, size?: number, announce = true) => {
     const sheet = active ?? "";
     setAllSizes((all) => {
       const now = all[sheet] ?? { cols: {}, rows: {} };
@@ -198,7 +198,7 @@ export function SheetView({ client, book, title, changes, presence, connection, 
       else next[index] = clampSize(axis, size);
       return { ...all, [sheet]: { ...now, [axis]: next } };
     });
-    if (size !== undefined) setNote(`${axis === "cols" ? "Column" : "Row"} ${axis === "cols" ? colLetters(index) : index}, ${clampSize(axis, size)} pixels`);
+    if (size !== undefined && announce) setNote(`${axis === "cols" ? "Column" : "Row"} ${axis === "cols" ? colLetters(index) : index}, ${clampSize(axis, size)} pixels${clampSize(axis, size) !== size ? ", limit" : ""}`);
   };
   // Move the sizes after an inserted (by 1) or a deleted (by -1) row or column.
   const shiftSizes = (axis: "cols" | "rows", at: number, by: 1 | -1) =>
@@ -223,7 +223,7 @@ export function SheetView({ client, book, title, changes, presence, connection, 
   }
   function moveDrag(event: PointerEvent<HTMLElement>) {
     const now = drag.current;
-    if (now) resize(now.axis, now.index, now.size + (now.axis === "cols" ? event.clientX : event.clientY) - now.start);
+    if (now) resize(now.axis, now.index, now.size + (now.axis === "cols" ? event.clientX : event.clientY) - now.start, false);
   }
   const handle = (axis: "cols" | "rows", index: number) => (
     <span
@@ -336,6 +336,7 @@ export function SheetView({ client, book, title, changes, presence, connection, 
   async function deleteSheet() {
     try {
       await client.deleteSheet({ book, name: active! });
+      setAllSizes(({ [active!]: _gone, ...rest }) => rest);
       setDialog(null);
       await load(null);
       setSel({ row: 1, col: 1 });
@@ -468,7 +469,7 @@ export function SheetView({ client, book, title, changes, presence, connection, 
                 </tbody>
               </table>
             </div>
-            {data.blank && draft === null && <p className="as-blank">This sheet is empty. Select a cell and type. Start a formula with =.</p>}
+            {data.blank && draft === null && <p className="as-blank">{readOnly ? "This sheet is empty." : "This sheet is empty. Select a cell and type. Start a formula with =."}</p>}
           </div>
           <nav className="as-row as-tabs" aria-label="Sheets">
             {sheets.map((name) => (
