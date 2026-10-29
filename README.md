@@ -71,6 +71,35 @@ A failed call throws `SheetsApiError` with the HTTP `status` and a `code`: `bad_
 a 2xx answer that is not JSON (for example from a wrong `baseUrl`) throws the error that `fetch` or `json()` throws. The client never retries. A write that fails may have landed:
 read the book before you send it again.
 
+### Other exports
+
+The root export, `agentic-spreadsheet`, also exports these names.
+
+- A1 helpers. `parseCell("B2")` returns `{ col: 2, row: 2 }`, and `formatCell` turns it back into `"B2"`.
+  `parseRange("A1:C3")` returns `{ c1, r1, c2, r2 }`. `colIndex("AA")` returns `27`, and `colLetters(27)`
+  returns `"AA"`. `parseCell` and `parseRange` throw on bad text.
+- CSV helpers. `parseCsv(text)` returns rows of strings. `formatCsv(rows)` writes CRLF rows. It adds a leading
+  `'` to text that starts with `= + - @`, a tab, or a carriage return. `inferCell(text)` turns one field into
+  a number, a boolean, a formula, or text. Empty text gives `null`. With `asText` set to `true`, a leading `=`
+  is kept as text, with a `'` in front.
+- Stores. `createMemoryStore()` and `createMemoryBlobs()` keep data in memory, for tests. `createFileStore(dir)`
+  and `createFileBlobs(dir)` keep data in files, as the CLI does. A store runs a transaction again when another
+  writer changed what it read, and throws `StoreConflictError` when the transaction keeps losing.
+  `createFileStore` also throws it when it cannot get its file lock in time, for any write. Read the book,
+  then retry the write.
+- `ctxFromEnv(process.env)` builds the context that the CLI and the MCP server use. It reads `SHEET_DIR`,
+  `SHEET_AS`, and `SHEET_KIND`.
+- `OPS` lists the operations that the CLI, the MCP server, and the HTTP API run. Each has a `name`, a
+  `description`, the `args` names, a `shape` (a Zod shape), and a `run` function. Parse the arguments with
+  `z.object(op.shape)` before you call `run`. `OpError` carries the HTTP status (404, 409, or 413).
+- `SheetError` is the error that a `Workbook` method throws for bad input, such as a bad sheet name, column,
+  width, position, value, or principal.
+  A bad A1 address throws a plain `Error`.
+- `toBase64(bytes)` and `fromBase64(text)` convert between bytes and base64.
+- `PRINCIPAL_KINDS` lists the five principal kinds. `isMachineMade(kind)` returns `true` for every kind except
+  `human`.
+- `VERSION` is the package version.
+
 ## CLI and MCP server
 
 ```sh
@@ -250,6 +279,11 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
 
 ## Limits
 
+- The grid has 16,384 columns (A to XFD) and 1,048,576 rows. A sheet name is at most 256 UTF-16 code units.
+  It cannot be blank or contain `[ ] : * ? / \ ! '`. The constants `MAX_COL`, `MAX_ROW`, and `MAX_SHEET_NAME`
+  hold these values.
+- A cell holds at most 32,767 UTF-16 code units of text (`MAX_TEXT`). One insert or delete changes at most 10,000
+  rows or columns (`MAX_STRUCTURE_COUNT`).
 - A formula nested more than 100 levels deep, or with more than 1,000 chained operators, gives
   `#DEPTH!` in that cell. Other cells are not affected. A chain of cells has no depth limit.
 - A loop gives `#CIRCULAR` in every cell on the loop, whichever cell you read first.

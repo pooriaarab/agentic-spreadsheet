@@ -5,6 +5,10 @@ Spreadsheets with formulas that people and agents edit together.
 Keywords: spreadsheet,sheets,formulas,grid,collaboration,agents,mcp,cli,csv,xlsx.
 
 - SDK: import { Workbook } from "agentic-spreadsheet".
+- Other SDK exports: parseCell, formatCell, parseRange, colIndex, colLetters (A1); parseCsv, formatCsv, inferCell (CSV);
+  createMemoryStore, createMemoryBlobs, createFileStore, createFileBlobs (stores); StoreConflictError; ctxFromEnv; OPS;
+  OpError (HTTP status 404, 409, 413); SheetError; toBase64, fromBase64; MAX_COL, MAX_ROW, MAX_TEXT, MAX_SHEET_NAME, MAX_STRUCTURE_COUNT; isMachineMade; PRINCIPAL_KINDS; VERSION.
+  See README, "Other exports" and "Limits".
 - Remote SDK: import { createClient } from "agentic-spreadsheet/client". Calls the Worker API with fetch only.
   One method per route: list, create, read, write, setFormula, insertRows, deleteRows, insertCols,
   deleteCols, sheets, addSheet, deleteSheet, exportCsv, importCsv, share, unshare, remove, health.
