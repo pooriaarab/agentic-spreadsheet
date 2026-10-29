@@ -94,17 +94,24 @@ export function createAccess(store: Store) {
     async invites(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}) {
       const page = await sharing.listInvites(await context(who), await resourceId(book), { limit: paging.limit ?? 100, cursor: paging.cursor });
       // An invite with an id or a role that is not valid is not honored, so it is not listed.
-      const invites = page.invites
-        .filter((i) => typeof i.id === "string" && (SHARE_ROLES as readonly unknown[]).includes(i.role))
-        .map((i) => ({
+      // A time in the store that is not a number is listed as 0: an expiry of 0 is expired, and an accept time of 0 is accepted.
+      // The library list leaves such a time out, which would read as "never expires" or "still open".
+      const time = (value: unknown) => (value == null ? {} : { v: typeof value === "number" && Number.isFinite(value) ? value : 0 });
+      const invites = [];
+      for (const i of page.invites) {
+        if (typeof i.id !== "string" || !(SHARE_ROLES as readonly unknown[]).includes(i.role)) continue;
+        const stored = (await store.get("invites", i.id)) ?? {};
+        const [expiresAt, acceptedAt] = [time(stored.expiresAt).v, time(stored.acceptedAt).v];
+        invites.push({
           id: i.id,
           role: i.role as ShareRole,
           for: i.for,
           ...(i.handle === undefined ? {} : { handle: i.handle }),
-          ...(i.expiresAt === undefined ? {} : { expiresAt: i.expiresAt }),
-          ...(i.acceptedAt === undefined ? {} : { acceptedAt: i.acceptedAt }),
+          ...(expiresAt === undefined ? {} : { expiresAt }),
+          ...(acceptedAt === undefined ? {} : { acceptedAt }),
           ...(i.revokedAt === undefined ? {} : { revokedAt: i.revokedAt }),
-        }));
+        });
+      }
       return { invites, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
     },
     // Invites a person by email or an agent by handle. The role is not owner. Only an owner may.

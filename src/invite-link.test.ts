@@ -73,7 +73,7 @@ describe("invites and share links", () => {
     expect((await call(a, "ana", "GET", "/two/links")).json.links[0].revokedAt).toBeUndefined();
   });
 
-  test("the owner revokes an invite, an invite of another book is 404, and an accepted invite stays", async () => {
+  test("the owner revokes an invite, and an invite of another book is 404", async () => {
     const a = app();
     await call(a, "ana", "POST", "", { book: "one" });
     await call(a, "ana", "POST", "", { book: "two" });
@@ -84,6 +84,19 @@ describe("invites and share links", () => {
     expect((await call(a, "ed", "DELETE", `/two/invites/${invite.json.id}`)).status).toBe(403);
     expect((await call(a, "ana", "DELETE", `/two/invites/${invite.json.id}`)).status).toBe(200);
     expect((await call(a, "ana", "GET", "/two/invites")).json.invites[0].revokedAt).toBeTypeOf("number");
+  });
+
+  test("an accepted invite cannot be revoked, and a bad stored time never reads as open", async () => {
+    const store = createMemoryStore();
+    const a = app(store);
+    await call(a, "ana", "POST", "", { book: "b" });
+    const invite = await call(a, "ana", "POST", "/b/invites", { role: "viewer", handle: "helper" });
+    const doc = (await store.get("invites", invite.json.id))!;
+    await store.put("invites", invite.json.id, { ...doc, expiresAt: "soon" });
+    expect((await call(a, "ana", "GET", "/b/invites")).json.invites).toMatchObject([{ id: invite.json.id, expiresAt: 0 }]);
+    await store.put("invites", invite.json.id, { ...doc, acceptedAt: "yes" });
+    expect((await call(a, "ana", "GET", "/b/invites")).json.invites).toMatchObject([{ id: invite.json.id, acceptedAt: 0 }]);
+    expect((await call(a, "ana", "DELETE", `/b/invites/${invite.json.id}`)).status).toBe(400);
   });
 
   test("a stored link with a bad expiry lists as expired, not as never expiring", async () => {

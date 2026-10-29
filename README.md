@@ -233,7 +233,7 @@ curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/
 | `GET /:book/export` and `POST /:book/import` | `export` (CSV) and `import` |
 | `GET /:book/shares?limit=&cursor=` | List the roles on the workbook (owner only). A subject shows as a hash |
 | `PUT /:book/share` and `DELETE /:book/share/:kind/:subject` | Give a person (`human`) or an agent (`agent`) a role (`viewer`, `commenter`, `editor`), and take it back |
-| `GET` and `POST /:book/invites`, `DELETE /:book/invites/:invite`, `GET` and `POST /:book/links`, `DELETE /:book/links/:link` | List and make invites and share links, and revoke a link (owner only). See the sharing table above |
+| `GET` and `POST /:book/invites`, `DELETE /:book/invites/:invite`, `GET` and `POST /:book/links`, `DELETE /:book/links/:link` | List and make invites and share links, and revoke an invite or a link (owner only). See the sharing table above |
 | `DELETE /:book` | The owner deletes the workbook, and its grants, invites, links, and audit entries go with it |
 
 The key sets who writes, so a body cannot name another principal. The Worker reads each request through the

@@ -9,7 +9,7 @@ export type Value = Cell | FormulaError;
 export type PrincipalKind = "human" | "agent_of_human" | "agent_of_agent" | "agent" | "user_token";
 export type SubjectKind = "human" | "agent";
 export type ShareRole = "viewer" | "commenter" | "editor";
-/** An open invite. It never shows the email: `for` says whether it is for an email or a handle. */
+/** An invite. It never shows the email: `for` says whether it is for an email or a handle. */
 export interface InviteSummary {
   id: string;
   role: ShareRole;
