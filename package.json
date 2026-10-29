@@ -112,9 +112,6 @@
     }
   },
   "overrides": {
-    "agentic-design": {
-      "zod": "^4.6.6"
-    },
     "agentic-formats": {
       "zod": "^4.6.6"
     }
