@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
+import { createAccess, NoShare, SHARE_ROLES, type ShareRole } from "./access.js";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
 import { createMemoryBlobs, createMemoryStore, type Blobs, type Store } from "agentic-identity";
@@ -44,6 +45,14 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   });
   app.get("/health", (c) => c.json({ ok: true, pack, version: VERSION }));
 
+  const access = createAccess(store);
+  // Who may use a book: a principal with no role sees "no workbook", as for a missing book. `list` still names every book (see the README).
+  async function guard(who: Principal, action: "read" | "write" | "admin", book: string): Promise<Response | null> {
+    const { allowed, role } = await access.role(who, action, book);
+    if (allowed) return null;
+    return role === null ? Response.json({ error: `no workbook "${book}"` }, { status: 404 }) : Response.json({ error: `the ${role} role cannot ${action} this workbook` }, { status: 403 });
+  }
+
   const api = new Hono<{ Variables: { who: Principal } }>();
   api.use(bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => c.json({ error: "the request is too large" }, 413) }));
   api.use(async (c, next) => {
@@ -55,6 +64,9 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   for (const [method, path, name] of ROUTES) {
     const op = OPS.find((o) => o.name === name)!;
     api.on(method, path, async (c) => {
+      const book = c.req.param("book");
+      const denied = book === undefined ? null : await guard(c.get("who"), op.readOnly ? "read" : "write", book);
+      if (denied !== null) return denied;
       let body: unknown = {};
       if (method !== "get") {
         body = await c.req.json().catch(() => null);
@@ -63,10 +75,30 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
       const parsed = z.object(op.shape).strict().safeParse({ ...c.req.query(), ...(body as object), ...c.req.param() });
       if (!parsed.success) return c.json({ error: message(parsed.error) }, 400);
       const result = await op.run(parsed.data, { store, blobs, principal: () => c.get("who"), maxWriteCells: MAX_WRITE_CELLS });
+      if (name === "new") await access.create(c.get("who"), (parsed.data as { book: string }).book);
       if (name === "export") return c.body((result as { csv: string }).csv, 200, { "content-type": "text/csv; charset=utf-8" });
       return c.json(result as object, name === "new" ? 201 : 200);
     });
   }
+  // The owner shares a book with a principal by id, and takes the share back.
+  const shareBody = z.object({ subject: z.string().regex(/^[\w.@:-]{1,128}$/), role: z.enum(SHARE_ROLES) }).strict();
+  api.put("/:book/share", async (c) => {
+    const denied = await guard(c.get("who"), "admin", c.req.param("book"));
+    if (denied !== null) return denied;
+    const parsed = shareBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: message(parsed.error) }, 400);
+    await access.share(c.get("who"), c.req.param("book"), parsed.data.subject, parsed.data.role as ShareRole);
+    return c.json({ ok: true });
+  });
+  api.delete("/:book/share/:subject", async (c) => {
+    const denied = await guard(c.get("who"), "admin", c.req.param("book"));
+    if (denied !== null) return denied;
+    await access.unshare(c.get("who"), c.req.param("book"), c.req.param("subject")).catch((error: unknown) => {
+      if (error instanceof NoShare) throw new OpError(error.message, 404);
+      throw error;
+    });
+    return c.json({ ok: true });
+  });
   app.route("/api/v1/sheets", api);
 
   app.notFound((c) => c.json({ error: "not found" }, 404));
