@@ -52,10 +52,15 @@ export class Layout {
   private readonly ends: number[] = [];
   // The item that holds each id, for the ids that are not part of a plain run.
   private readonly held = new Map<string, number>();
+  // The item where each id was first placed, which a move does not change.
+  private readonly origins = new Map<string, number>();
   private readonly runs: number[] = [];
 
   constructor(order: readonly unknown[], gone: ReadonlySet<string>) {
-    const entries = order.filter(validEntry);
+    // An entry key is used once, and is never a base id or the root. A repeat or a clash would
+    // list the same children twice, and an entry that names itself would never end.
+    const keys = new Set<string>();
+    const entries = order.filter((value): value is Entry => validEntry(value) && !isBaseId(value.k) && value.k !== ROOT && !keys.has(value.k) && !!keys.add(value.k));
     const latest = new Map<string, Entry>();
     for (const entry of entries) latest.set(entry.id, entry);
     // Siblings, newest first: the entry made last comes first.
@@ -105,7 +110,10 @@ export class Layout {
     this.starts.push(start);
     this.ends.push(start + (item.run ? item.to - item.from + 1 : item.visible ? 1 : 0));
     if (item.run) this.runs.push(at);
-    else if (holds) this.held.set(item.id, at);
+    else {
+      if (holds) this.held.set(item.id, at);
+      if (item.key === item.id) this.origins.set(item.id, at);
+    }
   }
 
   // The first item whose rows reach position `p`.
@@ -167,6 +175,13 @@ export class Layout {
       else return { before: this.starts[this.runs[mid]] + n - item.from, visible: true };
     }
     return null;
+  }
+
+  // Where an id was first placed. A range names its ends by this place, so a row that moves out of
+  // a range leaves it, and a row that moves in joins it. A single ref uses `place` and follows the row.
+  origin(id: string): Place | null {
+    const at = this.origins.get(id);
+    return at === undefined ? this.place(id) : { before: this.starts[at], visible: (this.items[at] as { visible: boolean }).visible };
   }
 
   // The 1-based position of a row that shows, or null.

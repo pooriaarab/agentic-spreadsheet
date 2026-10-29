@@ -93,7 +93,8 @@ A request body is at most 5 MB. `GET /health` needs no key.
   order of the ids and nothing else. Two writers who edit one sheet at the same time lose nothing,
   and a write lands on the row it was meant for, whatever the other writer inserts, deletes, or moves.
   `moveRows` and `moveCols` are in the SDK.
-- A workbook saved by an older version, with A1 keys, converts when it loads.
+- A workbook saved by an older version, with A1 keys, converts when it loads. Every copy converts
+  the same way, so copies that convert apart still merge.
 - Column widths and frozen rows.
 - Insert and delete rows and columns. Formula refs follow the moved cells.
   A ref to a deleted cell becomes `#REF!`. A range shrinks or grows to match.
@@ -123,9 +124,11 @@ A request body is at most 5 MB. `GET /health` needs no key.
   that sheet. A sheet with very many range formulas pays for that scan on each edit.
 - Ref rewriting does not handle whole-column refs such as `A:A`.
 - A write to a row that another writer deletes goes with the row. Two writers who move one row at
-  once get one place for it, the same on both copies. Two writers who each convert an old workbook,
-  then insert or move rows before they merge, can lose those row edits. Save the converted workbook
-  before two writers share it.
+  once get one place for it, the same on both copies.
+- A single ref follows a moved row. A range keeps the rows that stay between its ends: a row that
+  moves out of a range leaves it, and a row that moves in joins it.
+- Two inserts made at once can push a cell past the last row. The workbook keeps the cell, but no
+  read, export, or count sees it until rows are deleted.
 - A formula that names a sheet that does not exist yet takes the sheet when it is added. A formula
   written by one writer while another adds that sheet is not bound until the next rename or add.
 - Two clients that add a sheet with the same name while offline both succeed.

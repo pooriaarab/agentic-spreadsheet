@@ -85,6 +85,8 @@ type Axis = "row" | "col";
 const ORDER_KEY = { row: "rowOrder", col: "colOrder" } as const;
 const GONE_KEY = { row: "rowGone", col: "colGone" } as const;
 const counters = new WeakMap<Y.Doc, number>();
+// The client that makes the edits of a conversion, the same on every copy.
+const MIGRATION_CLIENT = 4_294_967_290;
 
 // New ids, unique across every copy of the workbook: the client id of this copy, then a count.
 function newIds(doc: Y.Doc, count: number): string[] {
@@ -104,7 +106,10 @@ export class Workbook {
   constructor(doc: Y.Doc = new Y.Doc()) {
     this.doc = doc;
     this.sheets = doc.getArray("sheets");
-    this.sheets.observeDeep(() => this.invalidate());
+    // A write to a cell or a width changes neither the order nor the names, so it keeps both caches.
+    this.sheets.observeDeep((events) => {
+      if (events.some(({ path }) => !(path.length === 2 && (path[1] === "cells" || path[1] === "widths")))) this.invalidate();
+    });
     this.migrate();
   }
 
@@ -114,12 +119,23 @@ export class Workbook {
   }
 
   // A workbook saved before cells had ids keys its cells by A1 address. Give each row and column
-  // its number as its id, and key the cells by those ids. A copy that does this gets the same
-  // result as any other copy, so two copies that both migrate still merge.
+  // its number as its id, and key the cells by those ids. Every copy makes the same edits in the
+  // same order, as one fixed client. Yjs then sees one set of edits, not one per copy, so two
+  // copies that both convert still merge, and keep what each writes after.
   private migrate(): void {
     const all = this.sheets.toArray();
     const legacy = all.filter((sheet) => !sheet.has("id"));
     if (legacy.length === 0) return;
+    const own = this.doc.clientID;
+    this.doc.clientID = MIGRATION_CLIENT;
+    try {
+      this.convert(all, legacy);
+    } finally {
+      this.doc.clientID = own;
+    }
+  }
+
+  private convert(all: YSheet[], legacy: YSheet[]): void {
     this.doc.transact(() => {
       all.forEach((sheet, i) => sheet.has("id") || sheet.set("id", `s${i}`));
       const idOf = (name: string) => all.find((sheet) => sameSheet(sheet.get("name") as string, name))?.get("id") as string | undefined;
@@ -130,7 +146,8 @@ export class Workbook {
         }
         const home = sheet.get("name") as string;
         const cells = this.cells(sheet);
-        for (const [key, value] of [...cells.entries()]) {
+        for (const key of [...cells.keys()].sort()) {
+          const value = cells.get(key);
           cells.delete(key);
           const cut = key.indexOf(":");
           let at: ReturnType<typeof parseCell>;
@@ -147,7 +164,8 @@ export class Workbook {
           cells.set(`${at.row}|${at.col}${key.slice(cut)}`, carried);
         }
         const widths = sheet.get("widths") as Y.Map<number>;
-        for (const [letters, width] of [...widths.entries()]) {
+        for (const letters of [...widths.keys()].sort()) {
+          const width = widths.get(letters) as number;
           widths.delete(letters);
           widths.set(String(colIndex(letters)), width);
         }
@@ -243,7 +261,7 @@ export class Workbook {
       if (at !== null && at <= MAX_COL) columnWidths[colLetters(at)] = width;
     }
     const boundary = sheet.get("frozen");
-    const place = typeof boundary === "string" ? rows.place(boundary) : null;
+    const place = typeof boundary === "string" ? rows.origin(boundary) : null;
     return {
       name: sheet.get("name") as string,
       frozenRows: place === null ? 0 : place.visible ? place.before + 1 : place.before,
@@ -309,9 +327,9 @@ export class Workbook {
             if (!key.endsWith(":c")) continue;
             const [row, col] = key.slice(0, -2).split("|");
             const at = { row: rows.position(row), col: cols.position(col) };
-            if (at.row !== null && at.col !== null) cells.push({ sheet: sheet.get("name") as string, address: formatCell({ col: at.col, row: at.row }) });
+            if (at.row !== null && at.col !== null && at.row <= MAX_ROW && at.col <= MAX_COL) cells.push({ sheet: sheet.get("name") as string, address: formatCell({ col: at.col, row: at.row }) });
           }
-        } else if (path.length === 1 ? keys.includes("name") : path[1] !== "widths") {
+        } else if (path.length === 1 ? keys.some((key) => key !== "frozen") : path[1] !== "widths") {
           return listener({ all: true });
         }
       }
@@ -469,7 +487,9 @@ export class Workbook {
     return (built[axis] ??= new Layout(order?.toArray() ?? [], new Set(gone?.keys() ?? [])));
   }
 
-  // The positions of the cells that hold anything and sit on a row and a column that show.
+  // The positions of the cells that hold anything and sit on a row and a column that show, inside
+  // the grid. Two inserts made at once can push a cell past the last row. It stays in the workbook,
+  // unread, until rows go.
   private used(sheet: YSheet): { row: number; col: number }[] {
     const rows = this.layout(sheet, "row");
     const cols = this.layout(sheet, "col");
@@ -482,7 +502,7 @@ export class Workbook {
       const [rowId, colId] = base.split("|");
       const row = rows.position(rowId);
       const col = cols.position(colId);
-      if (row !== null && col !== null) out.push({ row, col });
+      if (row !== null && col !== null && row <= MAX_ROW && col <= MAX_COL) out.push({ row, col });
     }
     return out;
   }
@@ -506,8 +526,8 @@ export class Workbook {
   private showRef(ref: IdRef): string {
     const sheet = this.sheets.toArray().find((s) => s.get("id") === ref.sheet);
     if (sheet === undefined) return "#REF!";
-    const rows = reach(this.layout(sheet, "row"), ref.r1, ref.r2, MAX_ROW);
-    const cols = reach(this.layout(sheet, "col"), ref.c1, ref.c2, MAX_COL);
+    const rows = reach(this.layout(sheet, "row"), ref.r1, ref.r2, MAX_ROW, ref.flags.isRange);
+    const cols = reach(this.layout(sheet, "col"), ref.c1, ref.c2, MAX_COL, ref.flags.isRange);
     if (rows === null || cols === null) return "#REF!";
     const prefix = ref.qualified ? `${quoteSheet(sheet.get("name") as string)}!` : "";
     return prefix + formatSpan({ c1: cols[0], c2: cols[1], r1: rows[0], r2: rows[1] }, ref.flags);
@@ -539,16 +559,16 @@ export class Workbook {
   }
 }
 
-// The positions a ref spans on one axis. A deleted end moves in to the nearest row that shows. A
-// span with no row left, or one that starts past the edge of the grid, has none. A span that
-// reaches past the edge is cut there.
-function reach(layout: Layout, from: string, to: string, max: number): [number, number] | null {
-  const a = layout.place(from);
-  const b = layout.place(to);
+// The positions a ref spans on one axis. A range names each end by where it was first placed. An
+// end that is deleted or moved away leaves the range, which then stops at the nearest row that
+// shows. A span with no row left, or one that starts past the edge of the grid, has none. A span
+// that reaches past the edge is cut there.
+function reach(layout: Layout, from: string, to: string, max: number, range: boolean): [number, number] | null {
+  const a = range ? layout.origin(from) : layout.place(from);
+  const b = range ? layout.origin(to) : layout.place(to);
   if (a === null || b === null) return null;
-  let lo = a.before + 1;
-  let hi = b.visible ? b.before + 1 : b.before;
-  if (lo > hi && a.visible && b.visible) [lo, hi] = [hi, lo];
+  const lo = a.before + 1;
+  const hi = b.visible ? b.before + 1 : b.before;
   return lo > max || hi < lo ? null : [lo, Math.min(hi, max)];
 }
 
