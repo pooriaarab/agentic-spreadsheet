@@ -20,8 +20,9 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
-- A web UI, served by the Worker: workbook list, grid with a formula bar, edits, structure changes, presence,
-  and an agent marker. It runs on `agentic-design`, the typed client, and `agentic-realtime`. See the README, "UI".
+- A web UI, served by the Worker in this repo (`src/ui-worker.ts`): workbook list, grid with a formula bar,
+  edits, structure changes, presence, and an agent marker. It runs on `agentic-design`, the typed client, and
+  `agentic-realtime`. See the README, "UI".
   The presence socket is `/api/v1/docs/:book/ws`. The browser sends the key in its `token` query parameter, so a
   key can appear in request URLs and logs. Presence runs only in the Worker in `src/ui-worker.ts`, which the npm
   package does not ship.
