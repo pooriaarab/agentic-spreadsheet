@@ -250,6 +250,8 @@ export async function roomGrant(request: Request, book: string, env: WorkerEnv) 
     },
   };
   const context = await principalFromWebSocketRequest(new Request(request.url, { method: request.method, headers }), port, { protocol: WS_PROTOCOL });
+  // A failed credential read is an error, not a wrong key: a 5xx throws, and a 401 or 403 is no access.
+  if (context instanceof Response && context.status >= 500) throw new Error(`the room could not check the key (status ${context.status})`);
   const who = context instanceof Response ? null : (seen.get(context) ?? null);
   if (who === null) return null;
   const principal = { id: who.id, kind: who.kind };
