@@ -1,0 +1,4 @@
+# Copy to .dev.vars. `npm run dev` makes this file for you, with a random key, when it is missing.
+SHEETS_API_KEYS={"a-key-of-at-least-32-bytes-0123456789":{"id":"ana","kind":"human"}}
+SHEETS_REGION=unknown
+SHEETS_UNSAFE_REGION=1

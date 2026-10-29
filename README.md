@@ -469,6 +469,18 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
 - CSV export refuses a sheet whose extent passes 1,000,000 cells. The HTTP API refuses a write or import of
   more than 10,000 cells (413). A formula may read at most 1,000,000 range cells.
 
+## Run locally
+
+```sh
+bun install        # or: npm ci
+bun run dev        # or: npm run dev
+curl http://127.0.0.1:8787/health
+```
+
+The script builds the app, then runs `wrangler dev`. On the first run it writes `.dev.vars` with a random API key and prints the key. Paste the key in the page to sign in. `.dev.vars` stays out of git. `.dev.vars.example` shows the format.
+
+Run `npm run dev:smoke` to check this path. It starts the dev server on port 8799, waits for `GET /health` to answer 200, and stops the server. CI runs it as the "dev smoke" step. Set `DEV_SMOKE_PORT` to use another port.
+
 ## License
 
 MIT.
