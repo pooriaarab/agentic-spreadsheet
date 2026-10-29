@@ -9,32 +9,33 @@ All notable changes to this project are listed here. The format follows
 
 ### Breaking changes
 
-- A delete of rows or columns that runs past the end of the sheet is refused with an error, and the
-  call changes nothing. Before, it gave no error. Check the range before you delete.
+- A delete of rows or columns that runs past the last row or column of the grid (row 1,048,576 or column XFD)
+  is refused with an error. Before, the call gave no error. Check the range before you delete.
 - A sheet name longer than 256 characters is refused when a sheet is added or renamed. Before, any length
   was accepted. Names that already exist are not changed.
+- Deploying the Worker from a checkout needs `npm run build` before `wrangler dev` or `wrangler deploy`,
+  because `wrangler.jsonc` serves `dist/ui`. The first deploy also applies a new migration for the
+  `SYNC_ROOM` Durable Object. A path outside `/api/` and `/health` now gets the UI page, not 404.
+  The `agentic-spreadsheet/worker` export does not change.
 
 ### Added
 
 - A web UI, served by the Worker: workbook list, grid with a formula bar, edits, structure changes, presence,
   and an agent marker. It runs on `agentic-design`, the typed client, and `agentic-realtime`. See the README, "UI".
+  The presence socket is `/api/v1/docs/:book/ws`.
 - Operations `delete-rows`, `insert-cols`, `delete-cols`, `sheets`, `add-sheet`, and `delete-sheet`. Each has a
   CLI command, an MCP tool (`sheet_` prefix), an HTTP route, and a client method.
   - HTTP: `DELETE /api/v1/sheets/:book/rows`, `POST` and `DELETE /api/v1/sheets/:book/cols`,
     `GET` and `POST /api/v1/sheets/:book/sheets`, and `DELETE /api/v1/sheets/:book/sheets/:name`.
 - Client methods `deleteRows`, `insertCols`, `deleteCols`, `sheets`, `addSheet`, and `deleteSheet`.
-- The Worker serves `/health` and the UI files from `dist/ui`. The UI files ship in the npm package.
 
 ### Changed
 
 - `npm run build` also builds the UI into `dist/ui`. `npm run typecheck` also checks the UI.
 - `ci:local` also runs the Playwright end-to-end tests against `wrangler dev`, with an axe WCAG 2.2 AA
   check in light and dark. A machine that runs them needs the Playwright browser.
-- The package has four new runtime dependencies: `agentic-design`, `agentic-realtime`, `react`, and
-  `react-dom`. They are needed for the UI.
-- The Worker entry (`wrangler.jsonc`) now serves the UI. A request outside `/api/` and `/health` gets the UI
-  files, so an unknown path that gave 404 now gets the UI page. A deploy needs the `SYNC_ROOM` Durable Object
-  binding and its migration.
+- The package has no new runtime dependencies. `agentic-design`, `agentic-realtime`, `react`, and
+  `react-dom` are development dependencies. They are built into `dist/ui`.
 
 ## [0.4.0] - 2026-10-29
 

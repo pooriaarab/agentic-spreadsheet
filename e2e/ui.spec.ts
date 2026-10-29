@@ -218,7 +218,8 @@ test("a write the API refuses shows an error and does not look saved", async ({ 
   await cell(page, "A1").click();
   await page.keyboard.type("9");
   await page.keyboard.press("Enter");
-  await expect(page.getByText("the viewer role cannot write this workbook")).toBeVisible();
+  // Exact: the status region also holds this text, and a substring match finds two elements.
+  await expect(page.getByText("the viewer role cannot write this workbook", { exact: true })).toBeVisible();
   await expect(cell(page, "A1")).toHaveText("");
 });
 
