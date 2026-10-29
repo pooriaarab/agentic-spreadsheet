@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { createAccess, NoShare, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
+import { createAccess, InviteTaken, NoInvite, NoLink, NoShare, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
 import { EraseRefusedError, hasScope, parseRegion, type Auth, type Blobs, type PrincipalContext, type Role, type Region, type Store } from "agentic-identity";
@@ -137,6 +137,59 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
     if (denied !== null) return denied;
     await access.unshare(c.get("who"), c.req.param("book"), { kind: kind.data, id: c.req.param("subject") }).catch((error: unknown) => {
       if (error instanceof NoShare) throw new OpError(error.message, 404);
+      throw error;
+    });
+    return c.json({ ok: true });
+  });
+  // Invites and share links. Only the owner. A role is never owner: only a grant makes an owner.
+  const page = z.object({ limit: z.coerce.number().int().min(1).max(100).optional(), cursor: z.string().max(512).optional() }).strict();
+  const lifetime = z.number().int().positive().max(10 * 365 * 24 * 3600 * 1000).optional();
+  const inviteBody = z.object({ role: z.enum(SHARE_ROLES), email: z.string().min(3).max(254).optional(), handle: z.string().max(64).optional(), expiresInMs: lifetime }).strict()
+    .refine((b) => (b.email === undefined) !== (b.handle === undefined), "give an email or a handle, not both");
+  const linkBody = z.object({ role: z.enum(SHARE_ROLES), signedInOnly: z.boolean().optional(), expiresInMs: lifetime }).strict();
+  api.get("/:book/invites", async (c) => {
+    const denied = await guard(c, "admin", c.req.param("book"));
+    if (denied !== null) return denied;
+    const query = page.safeParse(c.req.query());
+    if (!query.success) return c.json({ error: message(query.error) }, 400);
+    return c.json(await access.invites(c.get("who"), c.req.param("book"), query.data));
+  });
+  api.post("/:book/invites", async (c) => {
+    const denied = await guard(c, "admin", c.req.param("book"));
+    if (denied !== null) return denied;
+    const parsed = inviteBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: message(parsed.error) }, 400);
+    return c.json(await access.invite(c.get("who"), c.req.param("book"), parsed.data), 201);
+  });
+  api.delete("/:book/invites/:invite", async (c) => {
+    const denied = await guard(c, "admin", c.req.param("book"));
+    if (denied !== null) return denied;
+    await access.revokeInvite(c.get("who"), c.req.param("book"), c.req.param("invite")).catch((error: unknown) => {
+      if (error instanceof NoInvite) throw new OpError(error.message, 404);
+      if (error instanceof InviteTaken) throw new OpError(error.message, 409);
+      throw error;
+    });
+    return c.json({ ok: true });
+  });
+  api.get("/:book/links", async (c) => {
+    const denied = await guard(c, "admin", c.req.param("book"));
+    if (denied !== null) return denied;
+    const query = page.safeParse(c.req.query());
+    if (!query.success) return c.json({ error: message(query.error) }, 400);
+    return c.json(await access.links(c.get("who"), c.req.param("book"), query.data));
+  });
+  api.post("/:book/links", async (c) => {
+    const denied = await guard(c, "admin", c.req.param("book"));
+    if (denied !== null) return denied;
+    const parsed = linkBody.safeParse(await c.req.json().catch(() => null));
+    if (!parsed.success) return c.json({ error: message(parsed.error) }, 400);
+    return c.json(await access.createLink(c.get("who"), c.req.param("book"), parsed.data), 201);
+  });
+  api.delete("/:book/links/:link", async (c) => {
+    const denied = await guard(c, "admin", c.req.param("book"));
+    if (denied !== null) return denied;
+    await access.revokeLink(c.get("who"), c.req.param("book"), c.req.param("link")).catch((error: unknown) => {
+      if (error instanceof NoLink) throw new OpError(error.message, 404);
       throw error;
     });
     return c.json({ ok: true });

@@ -62,7 +62,7 @@ try {
 
 Methods: `list`, `create`, `read`, `write`, `setFormula`, `insertRows`, `deleteRows`, `insertCols`,
 `deleteCols`, `sheets`, `addSheet`, `deleteSheet`, `exportCsv`, `importCsv`, `share`, `shares`, `unshare`,
-`remove`, and `health`. Each takes the same fields as its route, plus an optional
+`invite`, `invites`, `uninvite`, `link`, `links`, `unlink`, `remove`, and `health`. Each takes the same fields as its route, plus an optional
 `{ signal }` as the second argument to cancel the call. Pass `fetch` to `createClient` to use your own.
 
 A failed call throws `SheetsApiError` with the HTTP `status` and a `code`: `bad_request` (400),
@@ -144,12 +144,37 @@ export SHEET_URL=https://sheets.example.com SHEET_TOKEN=<key>
 npx agentic-spreadsheet share budget --subject ana --subject-kind human --role editor   # give a role (owner only)
 npx agentic-spreadsheet shares budget                                                   # list the roles (owner only)
 npx agentic-spreadsheet unshare budget --subject ana --subject-kind human               # take it away
+npx agentic-spreadsheet invite budget --role viewer --email ada@example.com             # invite a person (or --handle <h> for an agent)
+npx agentic-spreadsheet invites budget                                                  # list the invites (no emails)
+npx agentic-spreadsheet uninvite budget --invite <id>                                   # revoke an invite that nobody accepted
+npx agentic-spreadsheet link budget --role viewer --signed-in-only true                 # make a share link: the token shows once
+npx agentic-spreadsheet links budget                                                    # list the links (no tokens)
+npx agentic-spreadsheet unlink budget --link <id>                                       # revoke a link
 ```
 
 The role is `viewer`, `commenter`, or `editor`. `--kind` is the kind of a writer, so a share uses `--subject-kind`.
-`shares` lists 100 roles a page: use `--limit` and `--cursor` (the `nextCursor` of the last page) to read on. The other commands and tools use the local store, so the workbook must exist on the Worker. `shares` shows each subject as a hash of its id, because the store never keeps the id. A refused call prints
-`error: <message>` and exits 1. The Worker has no share links: share with named people and agents. With the same
-two variables, `mcp` also has `sheet_share`, `sheet_shares`, and `sheet_unshare`. Without them, these tools do not exist.
+`shares`, `invites`, and `links` list 100 items a page: use `--limit` and `--cursor` (the `nextCursor` of the last page) to read on. The other commands and tools use the local store, so the workbook must exist on the Worker. `shares` shows each subject as a hash of its id, because the store never keeps the id. A refused call prints
+`error: <message>` and exits 1. With the same
+two variables, `mcp` also has the sheet_ tools in the table below. Without them, these tools do not exist.
+
+Every sharing call needs the owner role:
+
+| Action | SDK | CLI | MCP tool | HTTP |
+|---|---|---|---|---|
+| Give a role | `share` | `share` | `sheet_share` | `PUT /:book/share` |
+| List the roles | `shares` | `shares` | `sheet_shares` | `GET /:book/shares` |
+| Take a role | `unshare` | `unshare` | `sheet_unshare` | `DELETE /:book/share/:kind/:subject` |
+| Invite by email or handle | `invite` | `invite` | `sheet_invite` | `POST /:book/invites` |
+| List the invites | `invites` | `invites` | `sheet_invites` | `GET /:book/invites` |
+| Revoke an invite | `uninvite` | `uninvite` | `sheet_uninvite` | `DELETE /:book/invites/:invite` |
+| Make a share link | `link` | `link` | `sheet_link` | `POST /:book/links` |
+| List the links | `links` | `links` | `sheet_links` | `GET /:book/links` |
+| Revoke a share link | `unlink` | `unlink` | `sheet_unlink` | `DELETE /:book/links/:link` |
+
+An invite or a link gives `viewer`, `commenter`, or `editor`, never `owner`. An invite names an email (a person) or a
+handle (an agent). `--expires-in-ms` sets how long an invite or link lives. A link token shows once, in the reply that
+makes it. A list never shows the email, the token, or the token hash. Accepting an invite and
+opening a link are part of `agentic-identity`: this package does not serve them yet.
 A write needs `--as <id>` and `--kind <kind>` (or `SHEET_AS` and `SHEET_KIND`). There is no default
 kind. An agent sets `agent`, `agent_of_human`, or `agent_of_agent`. A read needs neither.
 `import` takes `--as-text`: a cell that starts with `=` stays text. Use it for CSV you do not trust.
@@ -209,6 +234,7 @@ curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/
 | `GET /:book/export` and `POST /:book/import` | `export` (CSV) and `import` |
 | `GET /:book/shares?limit=&cursor=` | List the roles on the workbook (owner only). A subject shows as a hash |
 | `PUT /:book/share` and `DELETE /:book/share/:kind/:subject` | Give a person (`human`) or an agent (`agent`) a role (`viewer`, `commenter`, `editor`), and take it back |
+| `GET` and `POST /:book/invites`, `DELETE /:book/invites/:invite`, `GET` and `POST /:book/links`, `DELETE /:book/links/:link` | List and make invites and share links, and revoke an invite or a link (owner only). See the sharing table above |
 | `DELETE /:book` | The owner deletes the workbook, and its grants, invites, links, and audit entries go with it |
 
 The key sets who writes, so a body cannot name another principal. The Worker reads each request through the

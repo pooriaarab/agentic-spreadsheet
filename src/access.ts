@@ -11,6 +11,32 @@ export class NoShare extends Error {
   }
 }
 
+export class InviteTaken extends Error {
+  constructor(invite: string) {
+    super(`invite "${invite}" is accepted: revoke its role with unshare`);
+  }
+}
+
+export class NoInvite extends Error {
+  constructor(invite: string) {
+    super(`no invite "${invite}" on this workbook`);
+  }
+}
+
+export class NoLink extends Error {
+  constructor(link: string) {
+    super(`no link "${link}" on this workbook`);
+  }
+}
+
+export interface LinkSummary {
+  id: string;
+  role: ShareRole;
+  signedInOnly: boolean;
+  expiresAt?: number;
+  revokedAt?: number;
+}
+
 export const SHARE_ROLES = ["viewer", "commenter", "editor"] as const;
 export type ShareRole = (typeof SHARE_ROLES)[number];
 
@@ -69,6 +95,76 @@ export function createAccess(store: Store) {
     async list(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}): Promise<{ grants: { subjectKind: SubjectKind; subjectHash: string; role: Role }[]; nextCursor?: string }> {
       const page = await sharing.listGrants(await context(who), await resourceId(book), { limit: paging.limit ?? 100, cursor: paging.cursor });
       return { grants: page.grants.map((g) => ({ subjectKind: g.subjectKind, subjectHash: g.subjectId, role: g.role })), nextCursor: page.nextCursor };
+    },
+    // The invites on a book. An invite shows no email: it says whether it is for an email or a handle. Only an owner may.
+    async invites(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}) {
+      const page = await sharing.listInvites(await context(who), await resourceId(book), { limit: paging.limit ?? 100, cursor: paging.cursor });
+      // An invite with an id or a role that is not valid is not honored, so it is not listed.
+      // A time in the store that is not a number is listed as 0: an expiry of 0 is expired, and an accept time of 0 is accepted.
+      // The library list leaves such a time out, which would read as "never expires" or "still open".
+      // A stored null accept time counts as accepted too, as in the library.
+      const time = (value: unknown, present: boolean) => (!present ? undefined : typeof value === "number" && Number.isFinite(value) ? value : 0);
+      const shown = page.invites.filter((i) => typeof i.id === "string" && (SHARE_ROLES as readonly unknown[]).includes(i.role));
+      const stored = await Promise.all(shown.map(async (i) => (await store.get("invites", i.id)) ?? {}));
+      const invites = shown.map((i, n) => {
+        const doc = stored[n];
+        const [expiresAt, acceptedAt] = [time(doc.expiresAt, doc.expiresAt != null), time(doc.acceptedAt, "acceptedAt" in doc && doc.acceptedAt !== undefined)];
+        return {
+          id: i.id,
+          role: i.role as ShareRole,
+          for: i.for,
+          ...(i.handle === undefined ? {} : { handle: i.handle }),
+          ...(expiresAt === undefined ? {} : { expiresAt }),
+          ...(acceptedAt === undefined ? {} : { acceptedAt }),
+          ...(i.revokedAt === undefined ? {} : { revokedAt: i.revokedAt }),
+        };
+      });
+      return { invites, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
+    },
+    // Invites a person by email or an agent by handle. The role is not owner. Only an owner may.
+    async invite(who: Principal, book: string, input: { role: ShareRole; email?: string; handle?: string; expiresInMs?: number }): Promise<{ id: string }> {
+      return sharing.createInvite(await context(who), await resourceId(book), input);
+    },
+    // The links on a book, one page. The store keeps a token hash only, and a list never shows it. The caller must
+    // have checked the owner role: the Worker does, and a second check would write a second audit entry.
+    async links(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}): Promise<{ links: LinkSummary[]; nextCursor?: string }> {
+      const resource = await resourceId(book);
+      const page = await store.query("links", { where: { resourceId: resource }, limit: paging.limit ?? 100, ...(paging.cursor === undefined ? {} : { cursor: paging.cursor }) });
+      // A doc with a bad id or a role that is not a share role is not honored, so it is not listed.
+      const valid = page.items.filter(({ data: d }) => typeof d.id === "string" && (SHARE_ROLES as readonly unknown[]).includes(d.role));
+      const links = valid.map(({ data: d }): LinkSummary => ({
+        id: String(d.id),
+        role: d.role as ShareRole,
+        signedInOnly: d.signedInOnly === true,
+        // An expiry that is not a number counts as expired, as in agentic-identity: it never reads as "never expires".
+        ...(d.expiresAt == null ? {} : { expiresAt: typeof d.expiresAt === "number" && Number.isFinite(d.expiresAt) ? d.expiresAt : 0 }),
+        ...(d.revokedAt != null ? { revokedAt: typeof d.revokedAt === "number" ? d.revokedAt : 0 } : {}),
+      }));
+      return { links, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
+    },
+    // The token shows once, in this reply. The role is not owner. Only an owner may.
+    async createLink(who: Principal, book: string, input: { role: ShareRole; signedInOnly?: boolean; expiresInMs?: number }, now = Date.now()): Promise<{ id: string; token: string }> {
+      const { expiresInMs, ...rest } = input;
+      return sharing.createLink(await context(who), await resourceId(book), { ...rest, ...(expiresInMs === undefined ? {} : { expiresAt: now + expiresInMs }) });
+    },
+    // A link of another book is "no such link" here, even for an owner of both.
+    async revokeLink(who: Principal, book: string, linkId: string): Promise<void> {
+      const resource = await resourceId(book);
+      const link = /^[\w-]{1,128}$/.test(linkId) ? await store.get("links", linkId) : null;
+      if (link?.resourceId !== resource) throw new NoLink(linkId);
+      // Revoking twice keeps the first revoke time.
+      if (link.revokedAt != null) return;
+      await sharing.revokeLink(await context(who), linkId);
+    },
+    // An invite of another book is "no such invite" here. An accepted invite cannot be revoked: revoke its grant with unshare.
+    async revokeInvite(who: Principal, book: string, inviteId: string): Promise<void> {
+      const resource = await resourceId(book);
+      const invite = /^[\w-]{1,128}$/.test(inviteId) ? await store.get("invites", inviteId) : null;
+      if (invite?.resourceId !== resource) throw new NoInvite(inviteId);
+      await sharing.revokeInvite(await context(who), inviteId).catch((error: unknown) => {
+        if (error instanceof Error && error.message === "invite already accepted") throw new InviteTaken(inviteId);
+        throw error;
+      });
     },
     async unshare(who: Principal, book: string, from: { kind: SubjectKind; id: string }): Promise<void> {
       const [resource, target] = [await resourceId(book), await subject(from.kind, from.id)];
