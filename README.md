@@ -137,7 +137,7 @@ If the Worker fails after it saves a new workbook and before it records the owne
   `conversionClash()` is true and every read and write throws, because each copy made its own order
   for the sheets and the merge keeps one. Load the workbook again from one copy, or better, convert
   once, save it, and then share it. The first write of the CLI or the Worker converts a stored
-  workbook and saves it, under the store lock, so a stored workbook converts once. A read converts a
+  workbook and saves it in one committed write, so a stored workbook converts once. A read converts a
   copy in memory and saves nothing. A copy of one old file converted on two machines meets this case.
   An old workbook whose log shows row, column, or sheet-name edits made at the same time and not
   accepted does not convert: the load throws, because its cells may sit at the wrong address. Accept the
@@ -161,7 +161,8 @@ If the Worker fails after it saves a new workbook and before it records the owne
 - Storage uses the `Store` and `Blobs` ports of `agentic-identity`. A workbook is a document in the store
   and its state is a blob. The CLI keeps both in files under the store directory (`store.json` and
   `blobs/`). A write takes a lock file, and a lock from a dead process is taken over. A workbook saved by
-  0.1.0 as one file per workbook is read as it is and moves into `store.json` on the first write.
+  0.1.0 as one file per workbook is read as it is and moves into `store.json` on the first write. A 0.1.0 file whose id starts and ends with two underscores,
+  or is longer than 256 characters, stops the store with an error that names the file. Rename it first.
   XLSX and ODS import and export are not built yet.
 - CSV export refuses a sheet whose extent passes 1,000,000 cells. The HTTP API refuses a write or import of
   more than 10,000 cells (413). A formula may read at most 1,000,000 range cells.
