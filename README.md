@@ -61,7 +61,7 @@ try {
 ```
 
 Methods: `list`, `create`, `read`, `write`, `setFormula`, `insertRows`, `deleteRows`, `insertCols`,
-`deleteCols`, `sheets`, `addSheet`, `deleteSheet`, `exportCsv`, `importCsv`, `share`, `unshare`,
+`deleteCols`, `sheets`, `addSheet`, `deleteSheet`, `exportCsv`, `importCsv`, `share`, `shares`, `unshare`,
 `remove`, and `health`. Each takes the same fields as its route, plus an optional
 `{ signal }` as the second argument to cancel the call. Pass `fetch` to `createClient` to use your own.
 
