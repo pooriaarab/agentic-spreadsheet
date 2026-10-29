@@ -85,8 +85,16 @@ type Axis = "row" | "col";
 const ORDER_KEY = { row: "rowOrder", col: "colOrder" } as const;
 const GONE_KEY = { row: "rowGone", col: "colGone" } as const;
 const counters = new WeakMap<Y.Doc, number>();
-// The client that makes the edits of a conversion, the same on every copy.
-const MIGRATION_CLIENT = 4_294_967_290;
+// The client id for the edits of a conversion. It comes from the state that is converted, so copies
+// that convert the same state make the same edits and Yjs sees one set. Copies that convert
+// different states get different ids, so their edits cannot clash.
+function conversionClient(doc: Y.Doc): number {
+  let id = 0x811c9dc5;
+  for (const byte of Y.encodeStateAsUpdate(doc)) id = Math.imul(id ^ byte, 0x01000193) >>> 0;
+  const known = Y.decodeStateVector(Y.encodeStateVector(doc));
+  while (id === 0 || known.has(id)) id = (id + 1) >>> 0;
+  return id;
+}
 
 // New ids, unique across every copy of the workbook: the client id of this copy, then a count.
 function newIds(doc: Y.Doc, count: number): string[] {
@@ -113,21 +121,23 @@ export class Workbook {
     this.migrate();
   }
 
+  // Edits that run in one outer transaction fire no event until it ends, so each edit that changes
+  // the order or the names clears the caches itself.
   private invalidate(): void {
     this.layouts = new Map();
     this.shown.clear();
   }
 
   // A workbook saved before cells had ids keys its cells by A1 address. Give each row and column
-  // its number as its id, and key the cells by those ids. Every copy makes the same edits in the
-  // same order, as one fixed client. Yjs then sees one set of edits, not one per copy, so two
-  // copies that both convert still merge, and keep what each writes after.
+  // its number as its id, and key the cells by those ids. Copies that convert one state make the
+  // same edits in the same order, as one client. Yjs then sees one set of edits, not one per copy,
+  // so two copies that both convert still merge, and keep what each writes after.
   private migrate(): void {
     const all = this.sheets.toArray();
     const legacy = all.filter((sheet) => !sheet.has("id"));
     if (legacy.length === 0) return;
     const own = this.doc.clientID;
-    this.doc.clientID = MIGRATION_CLIENT;
+    this.doc.clientID = conversionClient(this.doc);
     try {
       this.convert(all, legacy);
     } finally {
@@ -141,21 +151,23 @@ export class Workbook {
       const idOf = (name: string) => all.find((sheet) => sameSheet(sheet.get("name") as string, name))?.get("id") as string | undefined;
       for (const sheet of legacy) {
         for (const axis of ["row", "col"] as const) {
-          sheet.set(ORDER_KEY[axis], new Y.Array());
-          sheet.set(GONE_KEY[axis], new Y.Map());
+          if (!sheet.has(ORDER_KEY[axis])) sheet.set(ORDER_KEY[axis], new Y.Array());
+          if (!sheet.has(GONE_KEY[axis])) sheet.set(GONE_KEY[axis], new Y.Map());
         }
         const home = sheet.get("name") as string;
         const cells = this.cells(sheet);
         for (const key of [...cells.keys()].sort()) {
-          const value = cells.get(key);
-          cells.delete(key);
           const cut = key.indexOf(":");
           let at: ReturnType<typeof parseCell>;
           try {
             at = parseCell(key.slice(0, cut));
           } catch {
+            // A key that is not an address is dropped. One already in the new form is kept.
+            if (!key.includes("|")) cells.delete(key);
             continue;
           }
+          const value = cells.get(key);
+          cells.delete(key);
           const carried = key.endsWith(":c") && isFormula(value) ? mapRefs(value, home, ({ text, ref, flags }) => {
             const sheetId = idOf(ref.target);
             const { c1, r1, c2, r2 } = ref.range;
@@ -164,13 +176,13 @@ export class Workbook {
           cells.set(`${at.row}|${at.col}${key.slice(cut)}`, carried);
         }
         const widths = sheet.get("widths") as Y.Map<number>;
-        for (const letters of [...widths.keys()].sort()) {
+        for (const letters of [...widths.keys()].filter((key) => /^[A-Za-z]{1,3}$/.test(key)).sort()) {
           const width = widths.get(letters) as number;
           widths.delete(letters);
           widths.set(String(colIndex(letters)), width);
         }
         const frozen = sheet.get("frozenRows");
-        if (typeof frozen === "number" && frozen > 0) sheet.set("frozen", String(frozen));
+        if (typeof frozen === "number" && frozen > 0 && !sheet.has("frozen")) sheet.set("frozen", String(frozen));
         sheet.delete("frozenRows");
       }
       const log = this.doc.getArray("structure");
@@ -204,6 +216,7 @@ export class Workbook {
       sheet.set(GONE_KEY[axis], new Y.Map());
     }
     this.sheets.insert(Math.max(0, Math.min(index, this.sheets.length)), [sheet]);
+    this.invalidate();
     this.bindPending(sheet);
   }
 
@@ -213,6 +226,7 @@ export class Workbook {
     const renamed = !sameSheet(name, to);
     if (renamed) this.checkName(to);
     sheet.set("name", to);
+    this.invalidate();
     if (renamed) this.bindPending(sheet);
   }
 
@@ -241,7 +255,9 @@ export class Workbook {
     const rows = this.layout(target, "row");
     const cols = this.layout(target, "col");
     const { c1, r1, c2, r2 } = range;
-    return packRef({ sheet: target.get("id") as string, r1: rows.id(r1), c1: cols.id(c1), r2: rows.id(r2), c2: cols.id(c2), qualified, flags });
+    // A range names places, a single ref names a row and a column.
+    const name = flags.isRange ? (layout: Layout, at: number) => layout.key(at) : (layout: Layout, at: number) => layout.id(at);
+    return packRef({ sheet: target.get("id") as string, r1: name(rows, r1), c1: name(cols, c1), r2: name(rows, r2), c2: name(cols, c2), qualified, flags });
   }
 
   // A formula that points at the deleted sheet reads as #REF!.
@@ -249,6 +265,7 @@ export class Workbook {
     const sheet = this.find(name);
     if (this.sheets.length === 1) throw new SheetError("cannot delete the last sheet");
     this.sheets.delete(this.sheets.toArray().indexOf(sheet), 1);
+    this.invalidate();
   }
 
   sheetInfo(name: string): SheetInfo {
@@ -261,7 +278,7 @@ export class Workbook {
       if (at !== null && at <= MAX_COL) columnWidths[colLetters(at)] = width;
     }
     const boundary = sheet.get("frozen");
-    const place = typeof boundary === "string" ? rows.origin(boundary) : null;
+    const place = typeof boundary === "string" ? rows.placeOf(boundary) : null;
     return {
       name: sheet.get("name") as string,
       frozenRows: place === null ? 0 : place.visible ? place.before + 1 : place.before,
@@ -283,13 +300,14 @@ export class Workbook {
     return last.col === 0 ? null : `A1:${formatCell(last)}`;
   }
 
-  // Rows from the top stay in view. The sheet keeps the id of the last frozen row, so an insert
-  // above it, or a delete of a row in it, moves the line with the rows.
+  // Rows from the top stay in view. The sheet keeps the key of the place of the last frozen row, so
+  // an insert above it, or a delete of a row in it, moves the line with the rows.
   setFrozenRows(name: string, rows: number): void {
     if (!Number.isInteger(rows) || rows < 0 || rows > MAX_ROW) throw new SheetError(`invalid frozen rows ${rows}`);
     const sheet = this.find(name);
     if (rows === 0) sheet.delete("frozen");
-    else sheet.set("frozen", this.layout(sheet, "row").id(rows));
+    else sheet.set("frozen", this.layout(sheet, "row").key(rows));
+    this.invalidate();
   }
 
   setColumnWidth(name: string, column: string, width: number): void {
@@ -447,6 +465,7 @@ export class Workbook {
       const anchor = at === 1 ? ROOT : layout.key(at - 1);
       // Siblings read newest first, so the rows go in last to first.
       order.push(newIds(this.doc, count).reverse().map((id) => ({ k: id, id, a: anchor })));
+      this.invalidate();
       return;
     }
     const dead = new Set(layout.ids(at, count));
@@ -460,6 +479,7 @@ export class Workbook {
       }
       if (axis === "col") for (const id of dead) widths.delete(id);
     });
+    this.invalidate();
   }
 
   private move(name: string, axis: Axis, from: number, count: number, to: number): void {
@@ -477,6 +497,7 @@ export class Workbook {
       return entry;
     });
     (sheet.get(ORDER_KEY[axis]) as Y.Array<Entry>).push(entries);
+    this.invalidate();
   }
 
   private layout(sheet: YSheet, axis: Axis): Layout {
@@ -559,13 +580,12 @@ export class Workbook {
   }
 }
 
-// The positions a ref spans on one axis. A range names each end by where it was first placed. An
-// end that is deleted or moved away leaves the range, which then stops at the nearest row that
-// shows. A span with no row left, or one that starts past the edge of the grid, has none. A span
+// The positions a ref spans on one axis. A range names each end by a place. An end whose row is
+// deleted or moved away leaves the range, which then stops at the nearest row that shows. A span with no row left, or one that starts past the edge of the grid, has none. A span
 // that reaches past the edge is cut there.
 function reach(layout: Layout, from: string, to: string, max: number, range: boolean): [number, number] | null {
-  const a = range ? layout.origin(from) : layout.place(from);
-  const b = range ? layout.origin(to) : layout.place(to);
+  const a = range ? layout.placeOf(from) : layout.place(from);
+  const b = range ? layout.placeOf(to) : layout.place(to);
   if (a === null || b === null) return null;
   const lo = a.before + 1;
   const hi = b.visible ? b.before + 1 : b.before;

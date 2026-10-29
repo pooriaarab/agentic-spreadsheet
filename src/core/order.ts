@@ -57,8 +57,8 @@ export class Layout {
   private readonly ends: number[] = [];
   // The item that holds each id, for the ids that are not part of a plain run.
   private readonly held = new Map<string, number>();
-  // The item where each id was first placed, which a move does not change.
-  private readonly origins = new Map<string, number>();
+  // The item of each entry key. A key names a place in the tree, and a move never changes a place.
+  private readonly keyed = new Map<string, number>();
   private readonly runs: number[] = [];
 
   constructor(order: readonly unknown[], gone: ReadonlySet<string>) {
@@ -118,7 +118,7 @@ export class Layout {
     if (item.run) this.runs.push(at);
     else {
       if (holds) this.held.set(item.id, at);
-      if (item.key === item.id) this.origins.set(item.id, at);
+      this.keyed.set(item.key, at);
     }
   }
 
@@ -170,7 +170,22 @@ export class Layout {
   // Where an id sits, or null for an id this order has never seen.
   place(id: string): Place | null {
     const at = this.held.get(id);
-    if (at !== undefined) return { before: this.starts[at], visible: (this.items[at] as { visible: boolean }).visible };
+    return at === undefined ? this.inRun(id) : this.at(at);
+  }
+
+  // Where a place sits. A range names each end by the key of the place it covered when it was
+  // written, so a row that moves out of a range leaves it, and a row that moves in joins it.
+  // A single ref names an id, and follows the row.
+  placeOf(key: string): Place | null {
+    const at = this.keyed.get(key);
+    return at === undefined ? this.inRun(key) : this.at(at);
+  }
+
+  private at(at: number): Place {
+    return { before: this.starts[at], visible: (this.items[at] as { visible: boolean }).visible };
+  }
+
+  private inRun(id: string): Place | null {
     if (!isBaseId(id)) return null;
     const n = Number(id);
     for (let lo = 0, hi = this.runs.length - 1; lo <= hi; ) {
@@ -181,13 +196,6 @@ export class Layout {
       else return { before: this.starts[this.runs[mid]] + n - item.from, visible: true };
     }
     return null;
-  }
-
-  // Where an id was first placed. A range names its ends by this place, so a row that moves out of
-  // a range leaves it, and a row that moves in joins it. A single ref uses `place` and follows the row.
-  origin(id: string): Place | null {
-    const at = this.origins.get(id);
-    return at === undefined ? this.place(id) : { before: this.starts[at], visible: (this.items[at] as { visible: boolean }).visible };
   }
 
   // The 1-based position of a row that shows, or null.

@@ -120,7 +120,9 @@ describe("a workbook saved with A1 keys", () => {
     const older = legacyState();
     const doc = new Y.Doc();
     Y.applyUpdate(doc, older);
-    ((doc.getArray("sheets").get(0) as Y.Map<unknown>).get("cells") as Y.Map<unknown>).set("E9:c", 7);
+    const extra = (doc.getArray("sheets").get(0) as Y.Map<unknown>).get("cells") as Y.Map<unknown>;
+    extra.set("E9:c", 7);
+    extra.set("E9:by", stampOf("u1", "human"));
     const newer = Y.encodeStateAsUpdate(doc);
     const [a, b] = [fork(older, ids[0]), fork(newer, ids[1])];
     exchange(a, b);
@@ -133,7 +135,9 @@ describe("a workbook saved with A1 keys", () => {
   test("a key already in the new form is kept", () => {
     const doc = new Y.Doc();
     Y.applyUpdate(doc, legacyState());
-    ((doc.getArray("sheets").get(0) as Y.Map<unknown>).get("cells") as Y.Map<unknown>).set("3|4:c", "kept");
+    const cells = (doc.getArray("sheets").get(0) as Y.Map<unknown>).get("cells") as Y.Map<unknown>;
+    cells.set("3|4:c", "kept");
+    cells.set("3|4:by", stampOf("u1", "human"));
     const wb = Workbook.fromState(Y.encodeStateAsUpdate(doc));
     expect(grid(wb, "D3:D3")).toEqual([["kept"]]);
   });

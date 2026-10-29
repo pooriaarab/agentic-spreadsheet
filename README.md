@@ -93,8 +93,8 @@ A request body is at most 5 MB. `GET /health` needs no key.
   order of the ids and nothing else. Two writers who edit one sheet at the same time lose nothing,
   and a write lands on the row it was meant for, whatever the other writer inserts, deletes, or moves.
   `moveRows` and `moveCols` are in the SDK.
-- A workbook saved by an older version, with A1 keys, converts when it loads. Every copy converts
-  the same way, so copies that convert apart still merge.
+- A workbook saved by an older version, with A1 keys, converts when it loads. Copies that
+  convert the same saved state make the same edits, so they merge and keep what each writes after.
 - Column widths and frozen rows.
 - Insert and delete rows and columns. Formula refs follow the moved cells.
   A ref to a deleted cell becomes `#REF!`. A range shrinks or grows to match.
@@ -125,6 +125,8 @@ A request body is at most 5 MB. `GET /health` needs no key.
 - Ref rewriting does not handle whole-column refs such as `A:A`.
 - A write to a row that another writer deletes goes with the row. Two writers who move one row at
   once get one place for it, the same on both copies.
+- Copies that convert different saved states keep every cell, but a row insert or move made on one
+  copy before the merge can be lost. Save the converted workbook before two writers share it.
 - A single ref follows a moved row. A range keeps the rows that stay between its ends: a row that
   moves out of a range leaves it, and a row that moves in joins it.
 - Two inserts made at once can push a cell past the last row. The workbook keeps the cell, but no
