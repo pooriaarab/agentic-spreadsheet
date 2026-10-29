@@ -389,7 +389,6 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
   `blobs/`). A write takes a lock file, and a lock from a dead process is taken over. A workbook saved by
   0.1.0 as one file per workbook is read as it is and moves into `store.json` on the first write. A 0.1.0 file whose id starts and ends with two underscores,
   or is longer than 256 characters, stops the store with an error that names the file. Rename it first.
-  XLSX and ODS import and export are not built yet.
 - CSV export refuses a sheet whose extent passes 1,000,000 cells. The HTTP API refuses a write or import of
   more than 10,000 cells (413). A formula may read at most 1,000,000 range cells.
 
