@@ -5,6 +5,12 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.11.1] - 2026-10-29
+
+### Changed
+
+- The `agentic-identity` dependency is now `^0.9.0`, the `agentic-formats` dependency is now `^0.4.2`, and the `agentic-realtime` dependency is now `^0.4.3`. The code needs no change for them.
+
 ## [0.11.0] - 2026-10-29
 
 ### Added
