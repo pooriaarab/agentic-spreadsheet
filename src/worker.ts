@@ -1,13 +1,15 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { createAccess, NoShare, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
-import { EraseRefusedError, parseRegion, type Blobs, type Region, type Store } from "agentic-identity";
+import { EraseRefusedError, hasScope, parseRegion, type Blobs, type Region, type Store } from "agentic-identity";
 import { createD1Store, createR2Blobs, D1_SCHEMA, type D1Like, type R2Like } from "agentic-identity/cloudflare";
 import { message, OpError, OPS, removeWorkbook } from "./ops.js";
 import { VERSION } from "./version.js";
+
+export { fromAuth } from "./auth.js";
 
 export interface WorkerEnv extends AuthEnv {
   PACK_NAME?: string;
@@ -51,6 +53,8 @@ export interface AppOptions {
   pack?: string;
 }
 
+type ApiEnv = { Variables: { who: Principal; scopes: string[] | undefined } };
+
 export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsheet" }: AppOptions): Hono {
   const app = new Hono();
   app.use(async (c, next) => {
@@ -62,25 +66,31 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
 
   const access = createAccess(store);
   // Who may use a book: a principal with no role sees "no workbook", as for a missing book. `list` still names every book (see the README).
-  async function guard(who: Principal, action: "read" | "write" | "admin", book: string): Promise<Response | null> {
-    const { allowed, role } = await access.role(who, action, book);
+  // A credential may carry scopes that limit it below its role: a key with only `workbook:read` cannot write, whatever its role.
+  async function guard(c: Context<ApiEnv>, action: "read" | "write" | "admin", book: string): Promise<Response | null> {
+    const scopes = c.get("scopes");
+    const { allowed, role } = await access.role(c.get("who"), action, book);
+    if (allowed && role !== null && scopes !== undefined && !hasScope(scopes, `workbook:${action}`)) {
+      return Response.json({ error: `this credential has no ${action} scope` }, { status: 403 });
+    }
     if (allowed) return null;
     return role === null ? Response.json({ error: `no workbook "${book}"` }, { status: 404 }) : Response.json({ error: `the ${role} role cannot ${action} this workbook` }, { status: 403 });
   }
 
-  const api = new Hono<{ Variables: { who: Principal } }>();
+  const api = new Hono<ApiEnv>();
   api.use(bodyLimit({ maxSize: MAX_BODY_BYTES, onError: (c) => c.json({ error: "the request is too large" }, 413) }));
   api.use(async (c, next) => {
-    const who = await authenticate(c.req.raw);
-    if (who === null) return c.json({ error: "sign in with a valid credential" }, 401);
-    c.set("who", who);
+    const caller = await authenticate(c.req.raw);
+    if (caller === null) return c.json({ error: "sign in with a valid credential" }, 401);
+    c.set("who", { id: caller.id, kind: caller.kind });
+    c.set("scopes", caller.scopes);
     await next();
   });
   for (const [method, path, name] of ROUTES) {
     const op = OPS.find((o) => o.name === name)!;
     api.on(method, path, async (c) => {
       const book = c.req.param("book");
-      const denied = book === undefined ? null : await guard(c.get("who"), op.readOnly ? "read" : "write", book);
+      const denied = book === undefined ? null : await guard(c, op.readOnly ? "read" : "write", book);
       if (denied !== null) return denied;
       let body: unknown = {};
       // A read and a delete carry their input in the path and the query string.
@@ -99,7 +109,7 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   // The owner shares a book with a principal by id, and takes the share back.
   const shareBody = z.object({ kind: z.enum(SUBJECT_KIND_NAMES), subject: z.string().regex(/^[\w.@:-]{1,128}$/), role: z.enum(SHARE_ROLES) }).strict();
   api.put("/:book/share", async (c) => {
-    const denied = await guard(c.get("who"), "admin", c.req.param("book"));
+    const denied = await guard(c, "admin", c.req.param("book"));
     if (denied !== null) return denied;
     const parsed = shareBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: message(parsed.error) }, 400);
@@ -109,7 +119,7 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   api.delete("/:book/share/:kind/:subject", async (c) => {
     const kind = z.enum(SUBJECT_KIND_NAMES).safeParse(c.req.param("kind"));
     if (!kind.success) return c.json({ error: "the kind is human or agent" }, 400);
-    const denied = await guard(c.get("who"), "admin", c.req.param("book"));
+    const denied = await guard(c, "admin", c.req.param("book"));
     if (denied !== null) return denied;
     await access.unshare(c.get("who"), c.req.param("book"), { kind: kind.data, id: c.req.param("subject") }).catch((error: unknown) => {
       if (error instanceof NoShare) throw new OpError(error.message, 404);
@@ -119,7 +129,7 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   });
   // The owner deletes a book. Its grants, invites, links, and audit entries go with it.
   api.delete("/:book", async (c) => {
-    const denied = await guard(c.get("who"), "admin", c.req.param("book"));
+    const denied = await guard(c, "admin", c.req.param("book"));
     if (denied !== null) return denied;
     // The grants go after the blob and before the document, so a failed step can run again with the
     // owner's grant in place, and no one can make a book of this name while the old grants stand.
@@ -183,15 +193,16 @@ export async function storageFor(env: WorkerEnv): Promise<{ store: Store; blobs:
   return entry.ready;
 }
 
-let cached: { keys?: string; unsafe?: string; auth: Authenticator } | undefined;
+let cached: { keys?: string; unsafe?: string; store: Store; auth: Authenticator } | undefined;
 
-// The authenticator for this env. It throws ConfigError when the env sets no valid sign-in.
-async function authenticatorFor(env: WorkerEnv): Promise<Authenticator> {
-  let authenticate = cached?.keys === env.SHEETS_API_KEYS && cached?.unsafe === env.SHEETS_UNSAFE_TRUST_HEADERS ? cached?.auth : undefined;
+// The authenticator for this env and store. It throws ConfigError when the env sets no valid sign-in.
+// The keys are written into the store once for each store, not on every request.
+async function authenticatorFor(env: WorkerEnv, store: Store): Promise<Authenticator> {
+  if (cached?.keys === env.SHEETS_API_KEYS && cached?.unsafe === env.SHEETS_UNSAFE_TRUST_HEADERS && cached?.store === store) return cached.auth;
   try {
-    authenticate ??= await authFromEnv(env);
-    cached = { keys: env.SHEETS_API_KEYS, unsafe: env.SHEETS_UNSAFE_TRUST_HEADERS, auth: authenticate };
-    return authenticate;
+    const auth = await authFromEnv(env, store);
+    cached = { keys: env.SHEETS_API_KEYS, unsafe: env.SHEETS_UNSAFE_TRUST_HEADERS, store, auth };
+    return auth;
   } catch (error) {
     cached = undefined;
     throw error;
@@ -205,11 +216,13 @@ export async function roomGrant(request: Request, book: string, env: WorkerEnv) 
   const headers = new Headers(request.headers);
   const token = new URL(request.url).searchParams.get("token");
   if (!headers.has("authorization") && token !== null) headers.set("authorization", `Bearer ${token}`);
-  const who = await (await authenticatorFor(env))(new Request(request.url, { headers }));
-  if (who === null) return null;
   const { store } = await storageFor(env);
-  const { allowed, role } = await createAccess(store).role(who, "read", book);
-  return allowed && role !== null ? { principal: who, role, name: who.id } : null;
+  const who = await (await authenticatorFor(env, store))(new Request(request.url, { headers }));
+  if (who === null) return null;
+  const principal = { id: who.id, kind: who.kind };
+  const { allowed, role } = await createAccess(store).role(principal, "read", book);
+  const scoped = who.scopes === undefined || hasScope(who.scopes, "workbook:read");
+  return allowed && role !== null && scoped ? { principal, role, name: who.id } : null;
 }
 
 // Data lives in D1 and R2, so it outlives the isolate.
@@ -218,8 +231,8 @@ export default {
     let authenticate: Authenticator;
     let storage: { store: Store; blobs: Blobs };
     try {
-      authenticate = await authenticatorFor(env);
       storage = await storageFor(env);
+      authenticate = await authenticatorFor(env, storage.store);
     } catch (error) {
       if (!(error instanceof ConfigError)) throw error;
       return Response.json({ error: `the API cannot start: ${error.message}` }, { status: 500 });

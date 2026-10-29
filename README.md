@@ -8,7 +8,7 @@
 Spreadsheets with formulas that people and agents edit together.
 
 > Status: early. The workbook model, formula engine, CLI, and MCP server work. The package is on npm.
-> The HTTP API keeps data in D1 and R2. Its keys are still a stopgap.
+> The HTTP API keeps data in D1 and R2. Keys are read through the `Auth` port of `agentic-identity`.
 >
 > Warning: the HTTP API (the Worker) refuses to serve until you set `SHEETS_API_KEYS`, or set
 > `SHEETS_UNSAFE_TRUST_HEADERS=1`. That second setting trusts any caller who sets two headers.
@@ -108,7 +108,7 @@ The shipped `wrangler.jsonc` is for the EU: a bucket with the `eu` jurisdiction,
 Worker answers 500). R2 cannot report its jurisdiction, so nothing checks the bucket: keep the claim and the bucket in step.
 
 ```sh
-# one key, at least 32 bytes, tied to one id and kind
+# one key, at least 32 bytes, tied to one id and kind (a key may also carry "scopes" and, for an agent that acts for a person, "parent")
 npx wrangler dev --var SHEETS_REGION:unknown --var SHEETS_UNSAFE_REGION:1 --var 'SHEETS_API_KEYS:{"<your-key>":{"id":"bot-1","kind":"agent"}}'
 curl -H "authorization: Bearer <your-key>" -X POST localhost:8787/api/v1/sheets -d '{"book":"budget"}'
 curl -H "authorization: Bearer <your-key>" -X PUT localhost:8787/api/v1/sheets/budget/range \
@@ -128,8 +128,15 @@ curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/
 | `PUT /:book/share` and `DELETE /:book/share/:kind/:subject` | Give a person (`human`) or an agent (`agent`) a role (`viewer`, `commenter`, `editor`), and take it back |
 | `DELETE /:book` | The owner deletes the workbook, and its grants, invites, links, and audit entries go with it |
 
-The key sets who writes, so a body cannot name another principal. A key must have 32 bytes or more,
-and each needs an id and a kind. A missing or bad key gets 401. Errors are 400, 403, 404, 409, or 413.
+The key sets who writes, so a body cannot name another principal. The Worker reads each request through the
+`Auth` port of `agentic-identity`. On start, it writes the keys of `SHEETS_API_KEYS` into the store as principals
+and credentials. The store holds the hash of a key, never the key. A key has 32 bytes or more, with only letters,
+digits, `_` and `-`, and each needs an id and a kind. A kind that acts for another principal
+(`agent_of_human`, `agent_of_agent`, `user_token`) needs a `parent`, the id of another entry. An entry can also set
+`scopes`, such as `["workbook:read"]`: the key then cannot write, whatever its role on a workbook.
+A key that you remove from the env stops working at the next start. A missing or bad key gets 401.
+A principal with the `viewer` role (see `PUT /:book/share`) reads and gets 403 on a write.
+Errors are 400, 403, 404, 409, or 413.
 A request body is at most 5 MB. `GET /health` needs no key.
 
 A workbook has an owner: the principal that made it. The owner shares it with a kind (`human` or `agent`), an id, and a role.
