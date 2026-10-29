@@ -12,7 +12,7 @@ export type ShareRole = "viewer" | "commenter" | "editor";
 /** An open invite. It never shows the email: `for` says whether it is for an email or a handle. */
 export interface InviteSummary {
   id: string;
-  role: ShareRole | "owner";
+  role: ShareRole;
   for: "email" | "handle";
   handle?: string;
   expiresAt?: number;
@@ -22,7 +22,7 @@ export interface InviteSummary {
 }
 export interface LinkSummary {
   id: string;
-  role: ShareRole | "owner";
+  role: ShareRole;
   signedInOnly: boolean;
   expiresAt?: number;
   revokedAt?: number;

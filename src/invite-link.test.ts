@@ -79,6 +79,14 @@ describe("invites and share links", () => {
     expect((await call(a, "ana", "GET", "/b/links")).json.links).toEqual([]);
   });
 
+  test("a stored invite with a role of owner is not listed", async () => {
+    const store = createMemoryStore();
+    const a = app(store);
+    await call(a, "ana", "POST", "", { book: "b" });
+    await store.put("invites", "damaged", { id: "damaged", resourceId: await resourceId("b"), role: "owner", handle: "bot" });
+    expect((await call(a, "ana", "GET", "/b/invites")).json.invites).toEqual([]);
+  });
+
   test("revoking twice keeps the first revoke time", async () => {
     const a = app();
     await call(a, "ana", "POST", "", { book: "b" });

@@ -161,6 +161,13 @@ describe("sharing from the CLI", () => {
     }
   });
 
+  test("--limit with no value is an error, not a page of one", async () => {
+    await as(KEY_OWNER).create({ book: "lim" });
+    expect(cli(KEY_OWNER, "links", "lim", "--limit").code).toBe(1);
+    expect(cli(KEY_OWNER, "invites", "lim", "--limit", "0").code).toBe(1);
+    expect(cli(KEY_OWNER, "invites", "lim", "--limit", "5").code).toBe(0);
+  });
+
   test("a non-owner cannot list or change shares", () => {
     for (const args of [["shares", "plan"], ["share", "plan", "--subject", "vic", "--subject-kind", "human", "--role", "editor"], ["unshare", "plan", "--subject", "ana", "--subject-kind", "human"]]) {
       const r = cli(KEY_VIC, ...args);
@@ -196,7 +203,7 @@ describe("sharing from MCP", () => {
     }
   });
 
-  test("with a Worker it has sheet_share, sheet_shares, and sheet_unshare, and refusals are tool errors", async () => {
+  test("with a Worker it has the sharing tools, and refusals are tool errors", async () => {
     await as(KEY_OWNER).create({ book: "mcp" });
     const client = await connect(env(KEY_OWNER));
     try {
@@ -215,6 +222,8 @@ describe("sharing from MCP", () => {
       expect(JSON.stringify(listed.body)).not.toContain(made.token);
       expect((await call(client, "sheet_invites", { book: "mcp" })).body.invites).toMatchObject([{ for: "handle", handle: "helper" }]);
       expect((await call(client, "sheet_unlink", { book: "mcp", link: made.id })).body).toEqual({ ok: true });
+      const tooShort = (await client.callTool({ name: "sheet_link", arguments: { book: "mcp", role: "viewer", expiresInMs: true } })) as { isError?: boolean };
+      expect(tooShort.isError).toBe(true);
       const owner = (await client.callTool({ name: "sheet_link", arguments: { book: "mcp", role: "owner" } })) as { isError?: boolean };
       expect(owner.isError).toBe(true);
     } finally {

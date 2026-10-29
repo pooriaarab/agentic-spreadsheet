@@ -34,7 +34,8 @@ const subject = z.string().min(1).describe("The id of the person or agent.");
 const subjectKind = z.enum(SUBJECT_KIND_NAMES).describe("A person (human) and an agent with one id hold separate roles.");
 
 // The CLI gives text, and a flag with no value gives `true`: only a number or digits pass.
-const lifetime = z.union([z.number(), z.string().regex(/^\d{1,15}$/).transform(Number)]).pipe(z.number().int().positive()).optional().describe("How long it lives, in milliseconds.");
+const whole = (max: number) => z.union([z.number(), z.string().regex(/^\d{1,15}$/).transform(Number)]).pipe(z.number().int().min(1).max(max)).optional();
+const lifetime = whole(Number.MAX_SAFE_INTEGER).describe("How long it lives, in milliseconds.");
 // The CLI gives "true" or "false" as text, and MCP gives a boolean.
 const flag = z.union([z.boolean(), z.enum(["true", "false"]).transform((v) => v === "true")]).optional().describe("Only signed-in people may use it.");
 
@@ -67,7 +68,7 @@ export const SHARE_OPS: ShareOp[] = [
   },
   {
     name: "invites", description: "List the invites on a workbook, through the Worker. Owner only. An invite shows no email. Up to 100 a page: pass nextCursor back as cursor.", args: ["book"],
-    shape: { book, limit: z.coerce.number().int().min(1).max(100).optional().describe("Invites a page, 100 at most."), cursor }, readOnly: true,
+    shape: { book, limit: whole(100).describe("Invites a page, 100 at most."), cursor }, readOnly: true,
     run: (a: { book: string; limit?: number; cursor?: string }, client) => client.invites(a),
   },
   {
@@ -77,7 +78,7 @@ export const SHARE_OPS: ShareOp[] = [
   },
   {
     name: "links", description: "List the share links on a workbook, through the Worker. Owner only. A link shows no token. Up to 100 a page: pass nextCursor back as cursor.", args: ["book"],
-    shape: { book, limit: z.coerce.number().int().min(1).max(100).optional().describe("Links a page, 100 at most."), cursor }, readOnly: true,
+    shape: { book, limit: whole(100).describe("Links a page, 100 at most."), cursor }, readOnly: true,
     run: (a: { book: string; limit?: number; cursor?: string }, client) => client.links(a),
   },
   {

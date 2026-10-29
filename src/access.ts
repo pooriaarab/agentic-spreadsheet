@@ -1,4 +1,4 @@
-import { createSharing, type PrincipalContext, type Role, type Store, type Subject, type SubjectKind } from "agentic-identity";
+import { createSharing, type InviteSummary, type PrincipalContext, type Role, type Store, type Subject, type SubjectKind } from "agentic-identity";
 import { PRINCIPAL_KINDS, type Principal } from "./core/workbook.js";
 
 // Who may use a workbook. agentic-identity keeps the roles. A workbook is a resource of type
@@ -11,12 +11,6 @@ export class NoShare extends Error {
   }
 }
 
-export class NotOwner extends Error {
-  constructor() {
-    super("only an owner may list the links of a workbook");
-  }
-}
-
 export class NoLink extends Error {
   constructor(link: string) {
     super(`no link "${link}" on this workbook`);
@@ -25,7 +19,7 @@ export class NoLink extends Error {
 
 export interface LinkSummary {
   id: string;
-  role: Role;
+  role: ShareRole;
   signedInOnly: boolean;
   expiresAt?: number;
   revokedAt?: number;
@@ -92,22 +86,24 @@ export function createAccess(store: Store) {
     },
     // The invites on a book. An invite shows no email: it says whether it is for an email or a handle. Only an owner may.
     async invites(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}) {
-      return sharing.listInvites(await context(who), await resourceId(book), { limit: paging.limit ?? 100, cursor: paging.cursor });
+      const page = await sharing.listInvites(await context(who), await resourceId(book), { limit: paging.limit ?? 100, cursor: paging.cursor });
+      // An invite with an id or a role that is not valid is not honored, so it is not listed.
+      return { ...page, invites: page.invites.filter((i) => typeof i.id === "string" && (SHARE_ROLES as readonly unknown[]).includes(i.role)) as (InviteSummary & { role: ShareRole })[] };
     },
     // Invites a person by email or an agent by handle. The role is not owner. Only an owner may.
     async invite(who: Principal, book: string, input: { role: ShareRole; email?: string; handle?: string; expiresInMs?: number }): Promise<{ id: string }> {
       return sharing.createInvite(await context(who), await resourceId(book), input);
     },
-    // The links on a book, one page. The store keeps a token hash only, and a list never shows it. Only an owner may.
+    // The links on a book, one page. The store keeps a token hash only, and a list never shows it. The caller must
+    // have checked the owner role: the Worker does, and a second check would write a second audit entry.
     async links(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}): Promise<{ links: LinkSummary[]; nextCursor?: string }> {
       const resource = await resourceId(book);
-      if (!(await sharing.can(await context(who), "admin", resource)).allowed) throw new NotOwner();
       const page = await store.query("links", { where: { resourceId: resource }, limit: paging.limit ?? 100, ...(paging.cursor === undefined ? {} : { cursor: paging.cursor }) });
       // A doc with a bad id or a role that is not a share role is not honored, so it is not listed.
       const valid = page.items.filter(({ data: d }) => typeof d.id === "string" && (SHARE_ROLES as readonly unknown[]).includes(d.role));
       const links = valid.map(({ data: d }): LinkSummary => ({
         id: String(d.id),
-        role: d.role as Role,
+        role: d.role as ShareRole,
         signedInOnly: d.signedInOnly === true,
         ...(typeof d.expiresAt === "number" ? { expiresAt: d.expiresAt } : {}),
         ...(d.revokedAt != null ? { revokedAt: typeof d.revokedAt === "number" ? d.revokedAt : 0 } : {}),
