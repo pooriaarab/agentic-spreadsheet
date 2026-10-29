@@ -127,7 +127,7 @@ If the Worker fails after it saves a new workbook and before it records the owne
 
 ## UI
 
-A small web UI comes with the Worker. It uses the `agentic-design` package for tokens, controls, and
+A small web UI comes with the Worker in this repo, in `src/ui-worker.ts`. It uses the `agentic-design` package for tokens, controls, and
 dialogs, the typed client (`./client`) for every call, and a presence room from `agentic-realtime`.
 It has a list of workbooks, a sheet bar, a grid with A1 cells and a formula bar, edits for values
 and formulas, add and remove for rows, columns, and sheets, and light and dark themes.
@@ -155,7 +155,7 @@ it. `.dev.vars` stays out of git. Data lives in memory, so a restart empties it.
 - **Tests.** `npm run test:e2e` runs Playwright against `wrangler dev`. It signs in, makes a sheet,
   enters a value and a formula, checks the result and a reload, checks the keys, the structure
   changes, the agent marker, and presence, and runs an axe WCAG 2.2 AA check on each view in light and dark.
-  Screenshots of each view in both themes are in [`docs/screenshots`](docs/screenshots).
+  Screenshots of each view in both themes are in [`docs/screenshots`](https://github.com/pooriaarab/agentic-spreadsheet/tree/main/docs/screenshots).
   Run `UPDATE_SCREENSHOTS=1 npm run test:e2e` to make them again.
 - **Limits.** The grid shows the used range plus some room, up to 52 columns and 200 rows. The browser
   sends the key as a `token` query parameter when it joins a room, because a browser cannot set a header on a
