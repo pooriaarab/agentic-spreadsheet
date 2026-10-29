@@ -144,11 +144,6 @@ WRANGLER_SEND_METRICS=false npx wrangler dev
 Open the address that Wrangler prints, and paste the key. The tab keeps the key until you close
 it. `.dev.vars` stays out of git. Data lives in memory, so a restart empties it.
 
-The npm package ships the UI files in `dist/ui`, but not the Worker that serves them. To serve the UI from
-another host, serve `dist/ui` at the root of an origin, because the UI calls the API on its own origin.
-Answer `/api/v1/sheets` and `/health` with the Worker from `agentic-spreadsheet/worker`. The presence socket
-needs the `SyncRoom` route in `src/ui-worker.ts`.
-
 - **Keyboard.** Arrow keys move. Enter or F2 edits the cell. Typing on a cell replaces its text.
   Enter saves and moves down. Tab saves and moves right while you edit. Escape cancels. Delete clears.
   Outside an edit, Tab walks to the next cell and leaves the grid at the last cell, so focus is never trapped.
@@ -166,6 +161,12 @@ needs the `SyncRoom` route in `src/ui-worker.ts`.
   sends the key as a `token` query parameter when it joins a room, because a browser cannot set a header on a
   WebSocket. Use HTTPS, and keep Worker logs private. There is no sign-in page for a person
   yet: the key is the sign-in.
+- **Hosting.** The npm package ships the UI files in `dist/ui`, but not the Worker that serves them.
+  A host can serve `dist/ui` at the root of an origin, because the UI calls the API on its own origin.
+  The host answers `/api/v1/sheets` and `/health` with the default export of `agentic-spreadsheet/worker`.
+  Presence does not work this way yet. Its socket needs `agentic-realtime` and a `SyncRoom` Durable Object,
+  and `roomGrant` checks roles only in the Worker's own in-memory store. For presence, run the Worker from
+  a checkout, as `src/ui-worker.ts` does.
 
 ## Features
 
