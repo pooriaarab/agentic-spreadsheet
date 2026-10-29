@@ -129,6 +129,9 @@ A request body is at most 5 MB. `GET /health` needs no key.
   for the sheets and the merge keeps one. Load the workbook again from one copy, or better, convert
   once, save it, and then share it. The CLI and the Worker convert under the store lock and save,
   so a stored workbook converts once. A copy of one old file converted on two machines meets this case.
+  A clash that was saved cannot be repaired in place. Restore the workbook from a copy saved before it.
+  Old A1-keyed state that a sync provider delivers after the workbook is made is refused with an
+  error. Load it with `Workbook.fromState` instead.
 - A single ref follows a moved row. A range keeps the rows that stay between its ends: a row that
   moves out of a range leaves it, and a row that moves in joins it.
 - Two inserts made at once can push a cell past the last row. The workbook keeps the cell, but no

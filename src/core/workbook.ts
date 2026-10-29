@@ -119,6 +119,9 @@ export class Workbook {
   }
 
   private usable(): void {
+    if (this.sheets.toArray().some((sheet) => !sheet.has("id"))) {
+      throw new SheetError("this workbook has a sheet in the old A1 form; load it with Workbook.fromState so it converts");
+    }
     if (this.conversionClash()) {
       throw new SheetError("two copies converted an old workbook and then merged; load the workbook again from one copy");
     }
@@ -144,10 +147,11 @@ export class Workbook {
 
   private convert(all: YSheet[], legacy: YSheet[]): void {
     this.doc.transact(() => {
-      // The client id is in each sheet id, so sheets from two different conversions never share one.
+      // The client id is in each sheet id, so sheets from two conversions never share one. The colon
+      // keeps a converted id apart from the ids that newIds makes, which use a dot.
       const prefix = this.doc.clientID.toString(36);
       this.doc.getMap("conversions").set(prefix, true);
-      all.forEach((sheet, i) => sheet.has("id") || sheet.set("id", `${prefix}.s${i}`));
+      all.forEach((sheet, i) => sheet.has("id") || sheet.set("id", `${prefix}:s${i}`));
       const idOf = (name: string) => all.find((sheet) => sameSheet(sheet.get("name") as string, name))?.get("id") as string | undefined;
       for (const sheet of legacy) {
         for (const axis of ["row", "col"] as const) {
