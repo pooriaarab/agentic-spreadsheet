@@ -21,6 +21,8 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 // - a formula over ten 1,000,000-cell ranges is computed in full
 // - two far-apart cells (A1 and XFD1048576) make export build a huge grid, or kill the Worker
 // - export is not CSV, or a response can be cached
+// - a workbook is gone after the Worker restarts, or a Worker on a new directory sees another Worker's data
+// - the Worker serves with no region, with the region "unknown" and no unsafe flag, or with a bad region
 // - /health reports a version other than package.json
 
 const WRANGLER = fileURLToPath(new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url));
@@ -51,17 +53,22 @@ async function freePorts(count: number): Promise<number[]> {
 // number for every server, and two servers that start together clash on it. A port that was free
 // can still be taken before wrangler binds it, so a server that exits at start is started again, up
 // to three times.
-async function start(vars: Record<string, string>): Promise<Server> {
+// `persist` is the directory that holds D1 and R2 on disk. Two starts with one directory share data.
+const LOCAL = { SHEETS_REGION: "unknown", SHEETS_UNSAFE_REGION: "1" };
+async function start(vars: Record<string, string>, persist = mkdtempSync(join(tmpdir(), "state-")), local: Record<string, string> = LOCAL): Promise<Server> {
   for (let attempt = 1; ; attempt += 1) {
     const [port, inspector] = await freePorts(2);
-    const args = [WRANGLER, "dev", "--port", String(port), "--inspector-port", String(inspector), "--ip", "127.0.0.1", ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`])];
+    const args = [WRANGLER, "dev", "--port", String(port), "--inspector-port", String(inspector), "--ip", "127.0.0.1", "--persist-to", persist, ...Object.entries({ ...local, ...vars }).flatMap(([k, v]) => ["--var", `${k}:${v}`])];
     const env = { ...process.env, CI: "1", NO_COLOR: "1", WRANGLER_SEND_METRICS: "false", XDG_CONFIG_HOME: home, HOME: home };
     const child: ChildProcess = spawn(process.execPath, args, { env, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let [exited, log] = [false, ""];
     child.on("exit", () => (exited = true));
     for (const stream of [child.stdout, child.stderr]) stream?.on("data", (chunk: Buffer) => (log = (log + chunk).slice(-1500)));
     const url = `http://127.0.0.1:${port}`;
-    const stop = async () => void (child.pid && !exited && process.kill(-child.pid, "SIGKILL"));
+    const stop = async () => {
+      if (child.pid && !exited) process.kill(-child.pid, "SIGKILL");
+      while (!exited) await new Promise((r) => setTimeout(r, 50));
+    };
     for (let i = 0; i < 300; i += 1) {
       if (exited) break;
       if (await fetch(`${url}/health`).then(() => true, () => false)) return { url, stop };
@@ -245,4 +252,39 @@ describe("header mode (SHEETS_UNSAFE_TRUST_HEADERS=1)", () => {
     expect(read.authors[0][0]).toMatchObject({ id: "tool-7", kind: "agent", machine: true });
     expect((await call("headers", "GET", API, as(KEY_A))).status).toBe(401);
   });
+});
+
+describe("storage", () => {
+  test("a workbook is still there after the Worker restarts", async () => {
+    const persist = mkdtempSync(join(tmpdir(), "state-restart-"));
+    const first = await start({ SHEETS_API_KEYS: KEYS }, persist);
+    servers.first = first;
+    expect((await call("first", "POST", API, { ...as(KEY_H), body: { book: "kept" } })).status).toBe(201);
+    expect((await call("first", "PUT", `${API}/kept/range`, { ...as(KEY_H), body: { anchor: "A1", values: [[2, "=A1*3"]] } })).status).toBe(200);
+    await first.stop();
+    servers.second = await start({ SHEETS_API_KEYS: KEYS }, persist);
+    const read = await call("second", "GET", `${API}/kept/range?range=A1:B1`, as(KEY_H));
+    expect(read.status).toBe(200);
+    expect(read.json().values).toEqual([[2, 6]]);
+    // The share table is durable too: Ana still owns the book, and the bot has no role on it.
+    expect((await call("second", "GET", `${API}/kept/range?range=A1`, as(KEY_A))).status).toBe(404);
+    expect((await call("second", "POST", API, { ...as(KEY_H), body: { book: "kept" } })).status).toBe(409);
+  }, 120_000);
+
+  test("a Worker on a new state directory starts empty", async () => {
+    servers.fresh = await start({ SHEETS_API_KEYS: KEYS });
+    expect((await call("fresh", "GET", `${API}/kept/range?range=A1`, as(KEY_H))).status).toBe(404);
+    expect((await call("fresh", "GET", API, as(KEY_H))).json().books ?? []).toEqual([]);
+  }, 120_000);
+
+  test.each([
+    ["no region", {}, /set SHEETS_REGION/],
+    ["a bad region", { SHEETS_REGION: "mars" }, /set SHEETS_REGION/],
+    ["unknown without the unsafe flag", { SHEETS_REGION: "unknown" }, /SHEETS_UNSAFE_REGION=1/],
+  ])("%s: the Worker refuses to serve", async (name, vars, message) => {
+    servers[name] = await start({ SHEETS_API_KEYS: KEYS, ...vars }, undefined, {});
+    const res = await call(name, "GET", API, as(KEY_H));
+    expect(res.status).toBe(500);
+    expect(res.json().error).toMatch(message);
+  }, 120_000);
 });

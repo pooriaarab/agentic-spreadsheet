@@ -8,11 +8,14 @@
 Spreadsheets with formulas that people and agents edit together.
 
 > Status: early. The workbook model, formula engine, CLI, and MCP server work. The package is on npm.
-> The HTTP API is a stopgap with in-memory storage.
+> The HTTP API keeps data in D1 and R2. Its keys are still a stopgap.
 >
 > Warning: the HTTP API (the Worker) refuses to serve until you set `SHEETS_API_KEYS`, or set
 > `SHEETS_UNSAFE_TRUST_HEADERS=1`. That second setting trusts any caller who sets two headers.
 > Use it for tests only. See [HTTP API](#http-api).
+>
+> Warning: the Worker also refuses to serve until `SHEETS_REGION` says where the data lives (`eu` or `us`).
+> Under `wrangler dev`, set `SHEETS_REGION=unknown` and `SHEETS_UNSAFE_REGION=1`.
 >
 > Warning: the CLI and the MCP server do not check who calls them. `--as` and `--kind` are claims
 > that label each edit. Do not give either one to a caller you do not trust.
@@ -93,9 +96,20 @@ starts with `+ - @` or a control character, and import removes it, so a round tr
 The Worker serves the same operations under `/api/v1/sheets`. Run `npm run build` first, because `wrangler.jsonc`
 serves `dist/ui` and wrangler needs that directory. Then run `npx wrangler dev`.
 
+Workbooks live in a D1 database (binding `DB`) and an R2 bucket (binding `BLOBS`), both declared in
+`wrangler.jsonc`. They survive a restart. `wrangler dev` keeps them in `.wrangler/state`. To deploy, create the
+database and the bucket (commands are in `wrangler.jsonc`), put the database id in the file, and set
+`SHEETS_REGION` to `eu` or `us`. The Worker answers 500 if a binding or the region is missing, and that includes
+`/health`.
+
+The shipped `wrangler.jsonc` is for the EU: a bucket with the `eu` jurisdiction, and a database made with
+`--location weur`. For `us`, create the database with a US location, drop the jurisdiction from the bucket, and set
+`SHEETS_REGION=us`. D1 reports where it served each query, and the store refuses a mismatch with the claim (the
+Worker answers 500). R2 cannot report its jurisdiction, so nothing checks the bucket: keep the claim and the bucket in step.
+
 ```sh
 # one key, at least 32 bytes, tied to one id and kind
-npx wrangler dev --var 'SHEETS_API_KEYS:{"<your-key>":{"id":"bot-1","kind":"agent"}}'
+npx wrangler dev --var SHEETS_REGION:unknown --var SHEETS_UNSAFE_REGION:1 --var 'SHEETS_API_KEYS:{"<your-key>":{"id":"bot-1","kind":"agent"}}'
 curl -H "authorization: Bearer <your-key>" -X POST localhost:8787/api/v1/sheets -d '{"book":"budget"}'
 curl -H "authorization: Bearer <your-key>" -X PUT localhost:8787/api/v1/sheets/budget/range \
   -d '{"anchor":"A1","values":[[10,20,"=A1+B1"]]}'
@@ -140,11 +154,12 @@ Run it from a checkout:
 npm ci
 npm run build                      # builds the Worker and the UI into dist/
 echo 'SHEETS_API_KEYS={"a-key-of-at-least-32-bytes-0123456789":{"id":"ana","kind":"human"}}' > .dev.vars
+echo 'SHEETS_REGION=unknown' >> .dev.vars && echo 'SHEETS_UNSAFE_REGION=1' >> .dev.vars
 WRANGLER_SEND_METRICS=false npx wrangler dev
 ```
 
 Open the address that Wrangler prints, and paste the key. The tab keeps the key until you close
-it. `.dev.vars` stays out of git. Data lives in memory, so a restart empties it.
+it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangler/state`, so it survives a restart.
 
 - **Keyboard.** Arrow keys move. Enter or F2 edits the cell. Typing on a cell replaces its text.
   Enter saves and moves down. Tab saves and moves right while you edit. Escape cancels. Delete clears.
@@ -168,10 +183,9 @@ it. `.dev.vars` stays out of git. Data lives in memory, so a restart empties it.
   A host must serve them at the root of an origin, because the asset paths start at `/`, and the UI calls
   the API on its own origin.
   The host answers every path under `/api/v1/sheets/`, and `/health`, with the default export of
-  `agentic-spreadsheet/worker`. Pass an `env` with `SHEETS_API_KEYS`, or the Worker answers 500.
-  Data lives in memory in that isolate.
+  `agentic-spreadsheet/worker`. Pass an `env` with `SHEETS_API_KEYS`, `SHEETS_REGION`, and the `DB` and `BLOBS` bindings, or the Worker answers 500.
   Presence does not work this way yet. Its socket needs `agentic-realtime` and a `SyncRoom` Durable Object,
-  and `roomGrant` checks roles only in the Worker's own in-memory store. For presence, run the Worker from
+  and `roomGrant` needs the same `DB` binding. For presence, run the Worker from
   a checkout, as `src/ui-worker.ts` does. Without presence, the UI still works and shows Offline.
 
 ## Features
@@ -245,8 +259,7 @@ it. `.dev.vars` stays out of git. Data lives in memory, so a restart empties it.
   written by one writer while another adds that sheet is not bound until the next rename or add.
 - Two clients that add a sheet with the same name while offline both succeed.
   The merged workbook then holds two sheets with one name.
-- The Worker keeps workbooks in memory, in one isolate. A restart loses them, and two isolates do not
-  share them. A workbook stored before sharing has no owner,
+- The Worker keeps workbooks in D1 and R2. A workbook stored before sharing has no owner,
   and the Worker refuses it for every principal. `list` still names every workbook to every valid key.
   There is no rate limit yet.
 - Storage uses the `Store` and `Blobs` ports of `agentic-identity`. A workbook is a document in the store

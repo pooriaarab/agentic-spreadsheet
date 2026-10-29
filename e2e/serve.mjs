@@ -1,5 +1,6 @@
 // Start `wrangler dev` for the E2E tests: the API, the UI files in dist/ui, and the presence room.
-// Data lives in memory, so each run starts empty. No telemetry, and a private home for wrangler.
+// Data lives in a fresh local D1 and R2 under the private home. Each run starts empty.
+// No telemetry, and a private home for wrangler.
 import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -12,7 +13,7 @@ const wrangler = fileURLToPath(new URL("../node_modules/wrangler/bin/wrangler.js
 const home = mkdtempSync(join(tmpdir(), "wrangler-ui-"));
 const child = spawn(
   process.execPath,
-  [wrangler, "dev", "--port", String(port), "--inspector-port", String(port + 1), "--ip", "127.0.0.1", "--var", `SHEETS_API_KEYS:${JSON.stringify(KEYS)}`],
+  [wrangler, "dev", "--port", String(port), "--inspector-port", String(port + 1), "--ip", "127.0.0.1", "--persist-to", join(home, "state"), "--var", "SHEETS_REGION:unknown", "--var", "SHEETS_UNSAFE_REGION:1", "--var", `SHEETS_API_KEYS:${JSON.stringify(KEYS)}`],
   { stdio: "inherit", env: { ...process.env, CI: "1", NO_COLOR: "1", WRANGLER_SEND_METRICS: "false", XDG_CONFIG_HOME: home, HOME: home } },
 );
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));

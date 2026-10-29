@@ -4,12 +4,21 @@ import { z } from "zod";
 import { createAccess, NoShare, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
-import { createMemoryBlobs, createMemoryStore, EraseRefusedError, type Blobs, type Store } from "agentic-identity";
+import { EraseRefusedError, parseRegion, type Blobs, type Region, type Store } from "agentic-identity";
+import { createD1Store, createR2Blobs, D1_SCHEMA, type D1Like, type R2Like } from "agentic-identity/cloudflare";
 import { message, OpError, OPS, removeWorkbook } from "./ops.js";
 import { VERSION } from "./version.js";
 
 export interface WorkerEnv extends AuthEnv {
   PACK_NAME?: string;
+  /** Where the data lives: "eu" or "us". It is a claim you make at deploy time, with no default. */
+  SHEETS_REGION?: string;
+  /** Set to "1" to accept the region "unknown" under `wrangler dev`. Local D1 reports no region. Never set it in production. */
+  SHEETS_UNSAFE_REGION?: string;
+  /** D1 database: the workbooks and the shares. Create it with `wrangler d1 create agentic-spreadsheet --location weur`. */
+  DB?: D1Like;
+  /** R2 bucket: each workbook as a Yjs update. Create it with `--jurisdiction eu`. */
+  BLOBS?: R2Like;
 }
 
 const MAX_BODY_BYTES = 5 * 1024 * 1024;
@@ -124,6 +133,8 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   app.onError((error, c) => {
     if (error instanceof EraseRefusedError) return c.json({ error: error.message }, 409);
     if (error instanceof OpError) return c.json({ error: error.message }, error.status);
+    // The D1 adapter throws a plain Error when D1 serves a query from outside the claimed region. That is a deployment fault, not a bad request.
+    if (/outside the declared region/.test(error.message)) return c.json({ error: "the database is outside the declared region" }, 500);
     if (error instanceof SheetError || error.constructor === Error) return c.json({ error: error.message }, 400);
     console.error("sheets api error", error.name);
     return c.json({ error: "something failed on the server" }, 500);
@@ -131,8 +142,47 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   return app;
 }
 
-const store = createMemoryStore();
-const blobs = createMemoryBlobs();
+// The region claim. The bucket is declared with the "eu" jurisdiction in wrangler.jsonc: keep the two in step.
+function regionOf(env: WorkerEnv): Region {
+  let region: Region;
+  try {
+    region = parseRegion(env.SHEETS_REGION);
+  } catch {
+    throw new ConfigError('set SHEETS_REGION to "eu" or "us" ("unknown" only for local development)');
+  }
+  if (region === "unknown" && env.SHEETS_UNSAFE_REGION !== "1") {
+    throw new ConfigError('the region "unknown" turns the residency check off; set SHEETS_UNSAFE_REGION=1 to accept that for local development');
+  }
+  return region;
+}
+
+// One store and one blob client for each D1 binding and region, so a transaction queue and the schema check live as long as the isolate.
+const storages = new WeakMap<object, { region: Region; ready: Promise<{ store: Store; blobs: Blobs }> }>();
+// The adapter needs a signing secret. This package never makes signed URLs, so a secret that lives and dies with the isolate is enough.
+let urlSecret: string | undefined; // made on first use: a Worker may not make random values at load
+
+// The store over D1 and the blobs over R2. It throws ConfigError when the bindings or the region are not set.
+// The region is a claim. D1 reports where it served a query, and the store refuses a mismatch. An R2 binding
+// cannot report its jurisdiction, so nothing checks the bucket against the claim: keep wrangler.jsonc in step.
+export async function storageFor(env: WorkerEnv): Promise<{ store: Store; blobs: Blobs }> {
+  const { DB: db, BLOBS: bucket } = env;
+  if (!db || !bucket) throw new ConfigError("bind a D1 database as DB and an R2 bucket as BLOBS");
+  const region = regionOf(env);
+  let entry = storages.get(db);
+  if (entry?.region !== region) {
+    const ready = (async () => {
+      await db.prepare(D1_SCHEMA).run();
+      const store = createD1Store(db, { region });
+      const blobs = createR2Blobs(bucket, { region, urlBase: "https://invalid.example/unused", urlSecret: (urlSecret ??= `${crypto.randomUUID()}${crypto.randomUUID()}`) });
+      return { store, blobs };
+    })();
+    entry = { region, ready };
+    storages.set(db, entry);
+    ready.catch(() => storages.get(db) === entry && storages.delete(db));
+  }
+  return entry.ready;
+}
+
 let cached: { keys?: string; unsafe?: string; auth: Authenticator } | undefined;
 
 // The authenticator for this env. It throws ConfigError when the env sets no valid sign-in.
@@ -157,20 +207,23 @@ export async function roomGrant(request: Request, book: string, env: WorkerEnv) 
   if (!headers.has("authorization") && token !== null) headers.set("authorization", `Bearer ${token}`);
   const who = await (await authenticatorFor(env))(new Request(request.url, { headers }));
   if (who === null) return null;
+  const { store } = await storageFor(env);
   const { allowed, role } = await createAccess(store).role(who, "read", book);
   return allowed && role !== null ? { principal: who, role, name: who.id } : null;
 }
 
-// Data lives in memory in one isolate. It is lost when the isolate restarts.
+// Data lives in D1 and R2, so it outlives the isolate.
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
     let authenticate: Authenticator;
+    let storage: { store: Store; blobs: Blobs };
     try {
       authenticate = await authenticatorFor(env);
+      storage = await storageFor(env);
     } catch (error) {
       if (!(error instanceof ConfigError)) throw error;
       return Response.json({ error: `the API cannot start: ${error.message}` }, { status: 500 });
     }
-    return createApp({ store, blobs, authenticate, pack: env.PACK_NAME }).fetch(request);
+    return createApp({ ...storage, authenticate, pack: env.PACK_NAME }).fetch(request);
   },
 };
