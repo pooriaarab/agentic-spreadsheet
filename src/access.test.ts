@@ -73,17 +73,29 @@ describe("workbook access", () => {
     const asAgent = (method: string, path: string, body?: unknown) => call(a, "kim", method, path, body, "agent");
     // The agent kim has no role on the person kim's book.
     expect((await asAgent("GET", "/b/range?range=A1")).status).toBe(404);
-    await call(a, "kim", "PUT", "/b/share", { kind: "agent", subject: "kim", role: "viewer" });
+    expect((await call(a, "kim", "PUT", "/b/share", { kind: "agent", subject: "kim", role: "viewer" })).status).toBe(200);
     expect((await asAgent("GET", "/b/range?range=A1")).status).toBe(200);
     expect((await asAgent("PUT", "/b/range", { anchor: "A1", values: [[1]] })).status).toBe(403);
     // The person keeps the owner role, and the agent share does not touch it.
     expect((await call(a, "kim", "PUT", "/b/range", { anchor: "A1", values: [[1]] })).status).toBe(200);
-    await call(a, "kim", "DELETE", "/b/share/agent/kim");
+    expect((await call(a, "kim", "DELETE", "/b/share/agent/kim")).status).toBe(200);
     expect((await asAgent("GET", "/b/range?range=A1")).status).toBe(404);
     expect((await call(a, "kim", "GET", "/b/range?range=A1")).status).toBe(200);
     // A share of kind human does not reach an agent with that id.
-    await call(a, "kim", "PUT", "/b/share", { kind: "human", subject: "lee", role: "editor" });
+    expect((await call(a, "kim", "PUT", "/b/share", { kind: "human", subject: "lee", role: "editor" })).status).toBe(200);
     expect((await call(a, "lee", "GET", "/b/range?range=A1", undefined, "agent")).status).toBe(404);
+  });
+
+  test("an authenticator that returns an unknown kind gets no access", async () => {
+    const s = createMemoryStore();
+    const good = createApp({ store: s, blobs: createMemoryBlobs(), authenticate: trustHeaders });
+    expect((await call(good, "bot", "POST", "", { book: "b" }, "agent")).status).toBe(201);
+    const bad = createApp({ store: s, blobs: createMemoryBlobs(), authenticate: async () => ({ id: "bot", kind: "robot" }) as never });
+    for (const method of ["GET", "DELETE"]) {
+      const res = await bad.request(`/api/v1/sheets/b${method === "GET" ? "/range?range=A1" : ""}`, { method });
+      expect(res.status).toBeGreaterThanOrEqual(400);
+    }
+    expect((await call(good, "bot", "GET", "/b/range?range=A1", undefined, "agent")).status).toBe(200);
   });
 
   test("deleting a book erases its grants, so a new book of that name starts clean", async () => {

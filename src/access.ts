@@ -1,5 +1,5 @@
 import { createSharing, type PrincipalContext, type Role, type Store, type Subject, type SubjectKind } from "agentic-identity";
-import type { Principal } from "./core/workbook.js";
+import { PRINCIPAL_KINDS, type Principal } from "./core/workbook.js";
 
 // Who may use a workbook. agentic-identity keeps the roles. A workbook is a resource of type
 // "workbook", and the principal that makes it is its owner.
@@ -27,7 +27,12 @@ export const subjectId = (principal: string) => hash("p", principal);
 // A role belongs to a person or to an agent. A person and an agent with one id hold two roles.
 // Every kind but "human" is a machine, so it is an agent subject.
 export const SUBJECT_KIND_NAMES = ["human", "agent"] as const;
-const subjectKind = (kind: Principal["kind"]): SubjectKind => (kind === "human" ? "human" : "agent");
+function subjectKind(kind: Principal["kind"]): SubjectKind {
+  if (kind === "human") return "human";
+  // An unknown kind is refused, never read as an agent.
+  if (PRINCIPAL_KINDS.includes(kind)) return "agent";
+  throw new Error(`unknown principal kind "${String(kind)}"`);
+}
 
 async function context(who: Principal): Promise<PrincipalContext> {
   const id = await subjectId(who.id);
