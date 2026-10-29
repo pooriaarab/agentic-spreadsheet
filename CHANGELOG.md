@@ -5,6 +5,22 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-29
+
+### Changed
+
+- The principal kinds come from `agentic-identity` 0.6.0. The list is `human`, `agent_of_human`, `agent_of_agent`,
+  `agent`, and `user_token`. `human` and `agent` take no parent. The other three need a parent of a kind they may act
+  for. The local copy of the list is removed. The public API is the same: `PRINCIPAL_KINDS` and `PrincipalKind` are
+  still exported.
+- The Worker takes its auth helpers from `agentic-identity`: `createStoreAuth`, `assertId`, `intersectScopes`,
+  `isScope`, and `MAX_CHAIN_DEPTH`.
+
+### Documentation
+
+- The README auth section states the key length limit (512 characters at most) and the parent rule for `human` and
+  `agent`.
+
 ## [0.7.0] - 2026-10-29
 
 ### Added
