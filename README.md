@@ -107,7 +107,7 @@ The root export, `agentic-spreadsheet`, also exports these names.
 - Stores. `createMemoryStore()` and `createMemoryBlobs()` keep data in memory, for tests. `createFileStore(dir)`
   and `createFileBlobs(dir)` keep data in files, as the CLI does. A store runs a transaction again when another
   writer changed what it read, and throws `StoreConflictError` when the transaction keeps losing.
-  `createFileStore` also throws it when it keeps losing to another process, or when the file lock stays held for 5 seconds. Read the book,
+  `createFileStore` also throws it when it keeps losing to another process, or when the file lock stays held. Read the book,
   then retry the write.
 - `ctxFromEnv(process.env)` builds the context that the CLI and the MCP server use. It reads `SHEET_DIR`,
   `SHEET_AS`, and `SHEET_KIND`.
@@ -386,8 +386,8 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
   There is no rate limit yet.
 - Storage uses the `Store` and `Blobs` ports of `agentic-identity`. A workbook is a document in the store
   and its state is a blob. The CLI keeps both in files under the store directory (`store.json` and
-  `blobs/`). A write takes a lock file, and a lock from a dead process is taken over. A workbook saved by
-  0.1.0 as one file per workbook is read as it is and moves into `store.json` on the first write. A 0.1.0 file whose id starts and ends with two underscores,
+  `blobs/`). A write takes a lock file, and a lock that is more than 3 seconds old is taken over. A workbook saved by
+  0.1.0 as one file per workbook moves into `store.json` on the first call, a read included. The old files stay. A 0.1.0 file whose id starts and ends with two underscores,
   or is longer than 256 characters, stops the store with an error that names the file. Rename it first.
 - CSV export refuses a sheet whose extent passes 1,000,000 cells. The HTTP API refuses a write or import of
   more than 10,000 cells (413). A formula may read at most 1,000,000 range cells.
