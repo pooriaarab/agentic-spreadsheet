@@ -3,7 +3,7 @@ import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
-import { MemoryStore, type Store } from "./core/store.js";
+import { createMemoryBlobs, createMemoryStore, type Blobs, type Store } from "agentic-identity";
 import { message, OpError, OPS } from "./ops.js";
 import { VERSION } from "./version.js";
 
@@ -30,11 +30,12 @@ const ROUTES = [
 
 export interface AppOptions {
   store: Store;
+  blobs: Blobs;
   authenticate: Authenticator;
   pack?: string;
 }
 
-export function createApp({ store, authenticate, pack = "agentic-spreadsheet" }: AppOptions): Hono {
+export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsheet" }: AppOptions): Hono {
   const app = new Hono();
   app.use(async (c, next) => {
     await next();
@@ -61,7 +62,7 @@ export function createApp({ store, authenticate, pack = "agentic-spreadsheet" }:
       }
       const parsed = z.object(op.shape).strict().safeParse({ ...c.req.query(), ...(body as object), ...c.req.param() });
       if (!parsed.success) return c.json({ error: message(parsed.error) }, 400);
-      const result = await op.run(parsed.data, { store, principal: () => c.get("who"), maxWriteCells: MAX_WRITE_CELLS });
+      const result = await op.run(parsed.data, { store, blobs, principal: () => c.get("who"), maxWriteCells: MAX_WRITE_CELLS });
       if (name === "export") return c.body((result as { csv: string }).csv, 200, { "content-type": "text/csv; charset=utf-8" });
       return c.json(result as object, name === "new" ? 201 : 200);
     });
@@ -79,7 +80,8 @@ export function createApp({ store, authenticate, pack = "agentic-spreadsheet" }:
   return app;
 }
 
-const store = new MemoryStore();
+const store = createMemoryStore();
+const blobs = createMemoryBlobs();
 let cached: { keys?: string; unsafe?: string; auth: Authenticator } | undefined;
 
 // Data lives in memory in one isolate. It is lost when the isolate restarts.
@@ -94,6 +96,6 @@ export default {
       cached = undefined;
       return Response.json({ error: `the API cannot start: ${error.message}` }, { status: 500 });
     }
-    return createApp({ store, authenticate, pack: env.PACK_NAME }).fetch(request);
+    return createApp({ store, blobs, authenticate, pack: env.PACK_NAME }).fetch(request);
   },
 };

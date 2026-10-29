@@ -3,6 +3,14 @@
 All notable changes to this project are listed here. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## [Unreleased]
+
+### Changed
+
+- Storage uses the `Store` and `Blobs` ports of `agentic-identity`. The CLI file store keeps a
+  document file and a blob folder. A workbook saved by 0.1.0 is read as it is.
+- A workbook list cursor is opaque. Pass back the `cursor` that `list` returned.
+
 ## [0.1.0] - 2026-10-29
 
 First release.

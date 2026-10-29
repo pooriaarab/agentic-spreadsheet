@@ -1,10 +1,13 @@
-import { FileStore } from "./core/file-store.js";
+import { join } from "node:path";
+import { createFileBlobs, createFileStore } from "./core/file-store.js";
 import { PRINCIPAL_KINDS, type PrincipalKind } from "./core/workbook.js";
 import type { Ctx } from "./ops.js";
 
 export function ctxFromEnv(env: Record<string, string | undefined>): Ctx {
+  const dir = env.SHEET_DIR ?? ".sheets";
   return {
-    store: new FileStore(env.SHEET_DIR ?? ".sheets"),
+    store: createFileStore(dir),
+    blobs: createFileBlobs(join(dir, "blobs")),
     principal() {
       const { SHEET_AS: id = "", SHEET_KIND: kind = "" } = env;
       if (id === "") throw new Error("say who is writing: set --as <id> (or SHEET_AS)");

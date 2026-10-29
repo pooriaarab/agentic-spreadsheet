@@ -2,14 +2,16 @@ import { z } from "zod";
 import { colLetters, MAX_ROW, parseRange } from "./core/a1.js";
 import { Engine } from "./core/engine.js";
 import { formatCsv, inferCell, parseCsv } from "./core/csv.js";
-import { fromBase64, toBase64 } from "./core/bytes.js";
-import type { Store } from "./core/store.js";
+import { fromBase64 } from "./core/bytes.js";
+import { StoreConflictError, type Blobs, type Store, type StoreOps } from "agentic-identity";
 import { MAX_STRUCTURE_COUNT, Workbook, type Principal } from "./core/workbook.js";
 
 // One list of operations serves the CLI and the MCP server.
 
 export interface Ctx {
+  // A workbook is a document in `store` (name, update time, the key of its state). Its state is a blob in `blobs`.
   store: Store;
+  blobs: Blobs;
   // Who is writing. It throws when the caller did not say, so no edit gets a default label.
   principal(): Principal;
   // The most cells one write or import may carry. The CLI sets none. The Worker sets a cap.
@@ -54,20 +56,85 @@ const grid = z.preprocess(
   z.array(z.array(z.union([z.string(), z.number(), z.boolean(), z.null()]))),
 ).describe('Rows of values. A string that starts with "=" is a formula.');
 
-async function open(store: Store, id: string): Promise<Workbook> {
-  const doc = await store.get("workbooks", id);
+const COLLECTION = "workbooks";
+const newKey = (id: string) => `workbooks/${id}/${crypto.randomUUID()}`;
+
+// The document pointed at a state that a newer save already replaced. The caller reads again.
+class Stale extends Error {
+  constructor(id: string) {
+    super(`the stored state of workbook "${id}" is missing`);
+  }
+}
+const ATTEMPTS = 20;
+
+// A workbook saved by version 0.1.0 holds its state in the document. It moves to a blob on the first write.
+async function open(ctx: Ctx, ops: StoreOps, id: string): Promise<{ wb: Workbook; key?: string }> {
+  const doc = await ops.get(COLLECTION, id);
   if (doc === null) throw new OpError(`no workbook "${id}"`, 404);
-  return Workbook.fromState(fromBase64(doc.state as string));
+  if (typeof doc.state === "string") return { wb: Workbook.fromState(fromBase64(doc.state)) };
+  const blob = typeof doc.blob === "string" ? await ctx.blobs.get(doc.blob) : null;
+  if (blob === null) throw new Stale(id);
+  return { wb: Workbook.fromState(blob.data), key: doc.blob as string };
 }
 
-// Read, change, and save one workbook while holding the store lock. The workbook is saved only
-// when `change` returns, so a failed edit leaves the stored copy as it was.
-function edit<T>(ctx: Ctx, id: string, change: (wb: Workbook) => T): Promise<T> {
-  return ctx.store.transaction(async (store) => {
-    const wb = await open(store, id);
-    const result = change(wb);
-    await store.put("workbooks", id, { name: id, state: toBase64(wb.encode()), updatedAt: new Date().toISOString() });
+// Run `work` in a transaction. A blob it writes is dropped when the transaction runs again, throws, or
+// is overtaken, so a failed attempt leaves nothing that a workbook points at. `work` returns the result
+// and the key of the state it replaced.
+async function transact<T>(ctx: Ctx, work: (tx: StoreOps, written: (key: string) => void) => Promise<{ result: T; old?: string }>): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await transactOnce(ctx, work);
+    } catch (error) {
+      if (!(error instanceof Stale) || attempt >= ATTEMPTS) throw error;
+    }
+  }
+}
+
+// Read a workbook outside a transaction. A save that lands between the document read and the blob read makes the read start again.
+async function view(ctx: Ctx, id: string): Promise<Workbook> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return (await open(ctx, ctx.store, id)).wb;
+    } catch (error) {
+      if (!(error instanceof Stale) || attempt >= ATTEMPTS) throw error;
+    }
+  }
+}
+
+async function transactOnce<T>(ctx: Ctx, work: (tx: StoreOps, written: (key: string) => void) => Promise<{ result: T; old?: string }>): Promise<T> {
+  let pending: string | undefined;
+  const drop = (key: string | undefined) => (key === undefined ? undefined : ctx.blobs.delete(key).catch(() => undefined));
+  try {
+    const { result, old } = await ctx.store.transaction(async (tx) => {
+      await drop(pending);
+      pending = undefined;
+      return work(tx, (key) => void (pending = key));
+    });
+    pending = undefined;
+    await drop(old);
     return result;
+  } catch (error) {
+    await drop(pending);
+    if (error instanceof StoreConflictError) throw new OpError("another writer changed the workbook. Try again", 409);
+    throw error;
+  }
+}
+
+async function save(ctx: Ctx, tx: StoreOps, written: (key: string) => void, id: string, wb: Workbook): Promise<void> {
+  const key = newKey(id);
+  await ctx.blobs.put(key, wb.encode(), { contentType: "application/octet-stream" });
+  written(key);
+  await tx.put(COLLECTION, id, { name: id, blob: key, updatedAt: new Date().toISOString() });
+}
+
+// Read, change, and save one workbook in a transaction. The workbook is saved only when `change`
+// returns, so a failed edit leaves the stored copy as it was.
+function edit<T>(ctx: Ctx, id: string, change: (wb: Workbook) => T): Promise<T> {
+  return transact(ctx, async (tx, written) => {
+    const { wb, key } = await open(ctx, tx, id);
+    const result = change(wb);
+    await save(ctx, tx, written, id, wb);
+    return { result, old: key };
   });
 }
 
@@ -88,12 +155,12 @@ export const OPS: Op[] = [
     name: "new", description: "Create a workbook with one empty sheet.", args: ["book"],
     shape: { book, sheet: z.string().optional().describe("Name of the first sheet. Defaults to Sheet1.") },
     run(a: { book: string; sheet?: string }, ctx) {
-      return ctx.store.transaction(async (store) => {
-        if ((await store.get("workbooks", a.book)) !== null) throw new OpError(`workbook "${a.book}" exists`, 409);
+      return transact(ctx, async (tx, written) => {
+        if ((await tx.get(COLLECTION, a.book)) !== null) throw new OpError(`workbook "${a.book}" exists`, 409);
         const wb = new Workbook();
         wb.addSheet(a.sheet ?? "Sheet1");
-        await store.put("workbooks", a.book, { name: a.book, state: toBase64(wb.encode()), updatedAt: new Date().toISOString() });
-        return { book: a.book, sheets: wb.sheetNames() };
+        await save(ctx, tx, written, a.book, wb);
+        return { result: { book: a.book, sheets: wb.sheetNames() } };
       });
     },
   },
@@ -101,15 +168,15 @@ export const OPS: Op[] = [
     name: "list", description: "List workbook ids in name order.", args: [], readOnly: true,
     shape: { limit: z.coerce.number().int().min(1).optional(), cursor: z.string().optional() },
     async run(a: { limit?: number; cursor?: string }, ctx) {
-      const { items, cursor } = await ctx.store.query("workbooks", a);
-      return { books: items.map((i) => i.id), cursor };
+      const { items, nextCursor } = await ctx.store.query(COLLECTION, a);
+      return { books: items.map((i) => i.id), cursor: nextCursor };
     },
   },
   {
     name: "read", description: "Read a range: computed values, formulas, and who last edited each cell.", args: ["book", "range"], readOnly: true,
     shape: { book, range: z.string().describe("A1 range, such as A1:C5."), sheet },
     async run(a: { book: string; range: string; sheet?: string }, ctx) {
-      const wb = await open(ctx.store, a.book);
+      const wb = await view(ctx, a.book);
       const name = first(wb, a.sheet);
       const cells = wb.readRange(name, a.range);
       return {
@@ -159,7 +226,7 @@ export const OPS: Op[] = [
     name: "export", description: "Export a sheet as CSV with computed values.", args: ["book"], readOnly: true,
     shape: { book, sheet },
     async run(a: { book: string; sheet?: string }, ctx) {
-      const wb = await open(ctx.store, a.book);
+      const wb = await view(ctx, a.book);
       const name = first(wb, a.sheet);
       const extent = wb.extent(name);
       if (extent === null) return { csv: "" };

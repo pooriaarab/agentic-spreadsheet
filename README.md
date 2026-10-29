@@ -148,8 +148,10 @@ A request body is at most 5 MB. `GET /health` needs no key.
 - The Worker keeps workbooks in memory, in one isolate. A restart loses them, and two isolates do not
   share them. Any caller with a valid key can read and write every workbook. There is no sharing,
   no rate limit, and no audit log yet. The shared identity package is meant to replace this.
-- Storage for the CLI is local JSON files behind a `Store` interface. A write takes a lock file in the store
-  directory, so processes and parallel calls take turns. A lock from a dead process is taken over.
+- Storage uses the `Store` and `Blobs` ports of `agentic-identity`. A workbook is a document in the store
+  and its state is a blob. The CLI keeps both in files under the store directory (`store.json` and
+  `blobs/`). A write takes a lock file, and a lock from a dead process is taken over. A workbook saved by
+  0.1.0 as one file per workbook is read as it is and moves into `store.json` on the first write.
   XLSX and ODS import and export are not built yet.
 - CSV export refuses a sheet whose extent passes 1,000,000 cells. The HTTP API refuses a write or import of
   more than 10,000 cells (413). A formula may read at most 1,000,000 range cells.
