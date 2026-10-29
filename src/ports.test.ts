@@ -3,6 +3,8 @@
 //  2. A failed edit leaves a state blob, or points a workbook at one.
 //  3. A transaction that runs again leaves the blob of its first run.
 //  4. A restart loses a saved edit.
+//  5. A failed blob delete in removeWorkbook looks like success, or leaves a workbook that a second
+//     call cannot remove.
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -11,7 +13,7 @@ import { runBlobsContract, runStoreContract } from "agentic-identity/testing";
 import { z } from "zod";
 import { afterAll, describe, expect, test } from "vitest";
 import { createFileBlobs, createFileStore } from "./core/file-store.js";
-import { OPS, type Ctx } from "./ops.js";
+import { OPS, removeWorkbook, type Ctx } from "./ops.js";
 
 const dirs: string[] = [];
 const fresh = () => dirs[dirs.push(mkdtempSync(join(tmpdir(), "sheet-ports-"))) - 1];
@@ -123,5 +125,67 @@ describe("workbooks on shared ports", () => {
     await run("new", { book: "b" }, open());
     await run("write", { book: "b", anchor: "B2", values: [["=1+2"]] }, open());
     expect(((await run("read", { book: "b", range: "B2:B2" }, open())) as { values: unknown[][] }).values).toEqual([[3]]);
+  });
+
+  test("removeWorkbook throws a failed blob delete, and a second call finishes the erase", async () => {
+    const [store, real] = [createMemoryStore(), createMemoryBlobs()];
+    let fail = true;
+    const blobs: Blobs = { ...real, delete: async (key) => (fail ? Promise.reject(new Error("blob store down")) : real.delete(key)) };
+    const ctx = ctxOf(store, blobs);
+    await run("new", { book: "gone" }, ctx);
+    const blob = (await store.get("workbooks", "gone"))!.blob as string;
+    await expect(removeWorkbook(ctx, "gone")).rejects.toThrow(/could not delete the stored state/);
+    expect(await store.get("workbooks", "gone")).not.toBeNull();
+    fail = false;
+    await removeWorkbook(ctx, "gone");
+    expect(await store.get("workbooks", "gone")).toBeNull();
+    expect(await real.get(blob)).toBeNull();
+    await expect(removeWorkbook(ctx, "gone")).rejects.toMatchObject({ status: 404 });
+  });
+
+  test("removeWorkbook runs its before step once when it starts again, and a malformed blob field is a data error", async () => {
+    const [store, real] = [createMemoryStore(), createMemoryBlobs()];
+    const other = ctxOf(store, real);
+    let hook = true;
+    const blobs: Blobs = {
+      ...real,
+      delete: async (key) => {
+        if (hook) {
+          hook = false;
+          await run("write", { book: "twice", anchor: "A1", values: [[1]] }, other);
+        }
+        return real.delete(key);
+      },
+    };
+    await run("new", { book: "twice" }, ctxOf(store, real));
+    let calls = 0;
+    await removeWorkbook(ctxOf(store, blobs), "twice", async () => void (calls += 1));
+    expect(calls).toBe(1);
+    await store.put("workbooks", "odd", { name: "odd", blob: 5 });
+    await expect(removeWorkbook(other, "odd")).rejects.toThrow(/not a blob key/);
+  });
+
+  test("removeWorkbook starts again when a save lands before its delete, and removes the new blob", async () => {
+    const [store, real] = [createMemoryStore(), createMemoryBlobs()];
+    const other = ctxOf(store, real);
+    let hook = true;
+    const seen: string[] = [];
+    const blobs: Blobs = {
+      ...real,
+      delete: async (key) => {
+        if (hook) {
+          hook = false;
+          await run("write", { book: "busy", anchor: "A1", values: [[1]] }, other);
+          seen.push((await store.get("workbooks", "busy"))!.blob as string);
+        }
+        return real.delete(key);
+      },
+    };
+    await run("new", { book: "busy" }, ctxOf(store, real));
+    seen.push((await store.get("workbooks", "busy"))!.blob as string);
+    await removeWorkbook(ctxOf(store, blobs), "busy");
+    expect(await store.get("workbooks", "busy")).toBeNull();
+    expect(seen).toHaveLength(2);
+    for (const key of seen) expect(await real.get(key)).toBeNull();
   });
 });
