@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { createAccess, SHARE_ROLES, type ShareRole } from "./access.js";
+import { createAccess, NoShare, SHARE_ROLES, type ShareRole } from "./access.js";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
 import { createMemoryBlobs, createMemoryStore, type Blobs, type Store } from "agentic-identity";
@@ -93,7 +93,10 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   api.delete("/:book/share/:subject", async (c) => {
     const denied = await guard(c.get("who"), "admin", c.req.param("book"));
     if (denied !== null) return denied;
-    await access.unshare(c.get("who"), c.req.param("book"), c.req.param("subject"));
+    await access.unshare(c.get("who"), c.req.param("book"), c.req.param("subject")).catch((error: unknown) => {
+      if (error instanceof NoShare) throw new OpError(error.message, 404);
+      throw error;
+    });
     return c.json({ ok: true });
   });
   app.route("/api/v1/sheets", api);

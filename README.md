@@ -77,7 +77,7 @@ curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/
 | `PUT /:book/share` and `DELETE /:book/share/:subject` | Give a principal a role (`viewer`, `commenter`, `editor`), and take it back |
 
 The key sets who writes, so a body cannot name another principal. A key must have 32 bytes or more,
-and each needs an id and a kind. A missing or bad key gets 401. Errors are 400, 404, 409, or 413.
+and each needs an id and a kind. A missing or bad key gets 401. Errors are 400, 403, 404, 409, or 413.
 A request body is at most 5 MB. `GET /health` needs no key.
 
 A workbook has an owner: the principal that made it. The owner shares it with a principal id and a role.

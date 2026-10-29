@@ -11,9 +11,9 @@ import { trustHeaders } from "./auth.js";
 // - the last owner is removed, or a share names a role of "owner" or an unknown role
 
 const app = () => createApp({ store: createMemoryStore(), blobs: createMemoryBlobs(), authenticate: trustHeaders });
-const as = (id: string, kind = "human") => ({ "x-principal-id": id, "x-principal-kind": kind });
-async function call(a: ReturnType<typeof app>, who: string, method: string, path: string, body?: unknown) {
-  const res = await a.request(`/api/v1/sheets${path}`, { method, headers: { ...as(who), "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
+const as = (id: string, kind: string) => ({ "x-principal-id": id, "x-principal-kind": kind });
+async function call(a: ReturnType<typeof app>, who: string, method: string, path: string, body?: unknown, kind = who === "bot" ? "agent" : "human") {
+  const res = await a.request(`/api/v1/sheets${path}`, { method, headers: { ...as(who, kind), "content-type": "application/json" }, body: body === undefined ? undefined : JSON.stringify(body) });
   return { status: res.status, json: (await res.json().catch(() => ({}))) as Record<string, unknown> };
 }
 
@@ -63,6 +63,8 @@ describe("workbook access", () => {
     expect((await call(a, "cy", "PUT", "/b/range", { anchor: "A1", values: [[2]] })).status).toBe(403);
     expect((await call(a, "cy", "DELETE", "/b/share/ana")).status).toBe(403);
     expect((await call(a, "eve", "DELETE", "/b/share/cy")).status).toBe(404);
+    // A share that is not there is an error, not a success.
+    expect((await call(a, "ana", "DELETE", "/b/share/nobody")).status).toBe(404);
   });
 
   test("a share follows the principal id, whatever the kind", async () => {
@@ -74,7 +76,7 @@ describe("workbook access", () => {
 
   test("an agent that creates a book owns it", async () => {
     const a = app();
-    expect((await call(a, "bot", "POST", "", { book: "mine" }, )).status).toBe(201);
+    expect((await call(a, "bot", "POST", "", { book: "mine" })).status).toBe(201);
     expect((await call(a, "bot", "PUT", "/mine/range", { anchor: "A1", values: [[1]] })).status).toBe(200);
   });
 });

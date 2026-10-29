@@ -5,6 +5,12 @@ import type { Principal } from "./core/workbook.js";
 // "workbook", and the principal that makes it is its owner.
 const TYPE = "workbook";
 const SCOPES = [`${TYPE}:read`, `${TYPE}:write`, `${TYPE}:admin`];
+export class NoShare extends Error {
+  constructor(subject: string) {
+    super(`"${subject}" has no share on this workbook`);
+  }
+}
+
 export const SHARE_ROLES = ["viewer", "commenter", "editor"] as const;
 export type ShareRole = (typeof SHARE_ROLES)[number];
 
@@ -42,6 +48,8 @@ export function createAccess(store: Store) {
       await sharing.grant(await context(who), resource, to, role);
     },
     async unshare(who: Principal, book: string, subject: string): Promise<void> {
+      // Revoking a share that does not exist must not look like success.
+      if ((await store.get("grants", `${await resourceId(book)}:${await subjectId(subject)}`)) === null) throw new NoShare(subject);
       await sharing.revokeGrant(await context(who), await resourceId(book), await subjectId(subject));
     },
   };
