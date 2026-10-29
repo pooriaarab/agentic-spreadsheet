@@ -76,16 +76,18 @@ curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/
 | `PUT /:book/formula` | `formula` |
 | `POST /:book/rows` | `insert-rows` |
 | `GET /:book/export` and `POST /:book/import` | `export` (CSV) and `import` |
-| `PUT /:book/share` and `DELETE /:book/share/:subject` | Give a principal a role (`viewer`, `commenter`, `editor`), and take it back |
+| `PUT /:book/share` and `DELETE /:book/share/:kind/:subject` | Give a person (`human`) or an agent (`agent`) a role (`viewer`, `commenter`, `editor`), and take it back |
+| `DELETE /:book` | The owner deletes the workbook, and its grants, invites, links, and audit entries go with it |
 
 The key sets who writes, so a body cannot name another principal. A key must have 32 bytes or more,
 and each needs an id and a kind. A missing or bad key gets 401. Errors are 400, 403, 404, 409, or 413.
 A request body is at most 5 MB. `GET /health` needs no key.
 
-A workbook has an owner: the principal that made it. The owner shares it with a principal id and a role.
+A workbook has an owner: the principal that made it. The owner shares it with a kind (`human` or `agent`), an id, and a role.
 A viewer or commenter reads. An editor reads and writes. Only the owner shares. `agentic-identity` keeps the
 roles and writes an audit entry for each check. A principal with no role gets 404, as for a book that does not
-exist. A principal with a role that is too low gets 403. A share follows the principal id, whatever the kind.
+exist. A principal with a role that is too low gets 403. A share follows the kind and the id: a person and an agent with one id hold separate roles.
+Every kind but `human` counts as an agent.
 The owner cannot lower its own role. Each check adds an audit entry to the store, and nothing limits how many.
 If the Worker fails after it saves a new workbook and before it records the owner, the book has no owner.
 

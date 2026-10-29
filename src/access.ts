@@ -1,5 +1,5 @@
-import { createSharing, type PrincipalContext, type Role, type Store } from "agentic-identity";
-import type { Principal } from "./core/workbook.js";
+import { createSharing, type PrincipalContext, type Role, type Store, type Subject, type SubjectKind } from "agentic-identity";
+import { PRINCIPAL_KINDS, type Principal } from "./core/workbook.js";
 
 // Who may use a workbook. agentic-identity keeps the roles. A workbook is a resource of type
 // "workbook", and the principal that makes it is its owner.
@@ -24,9 +24,23 @@ async function hash(prefix: string, text: string): Promise<string> {
 export const resourceId = (book: string) => hash("wb", book);
 export const subjectId = (principal: string) => hash("p", principal);
 
+// A role belongs to a person or to an agent. A person and an agent with one id hold two roles.
+// Every kind but "human" is a machine, so it is an agent subject.
+export const SUBJECT_KIND_NAMES = ["human", "agent"] as const;
+function subjectKind(kind: Principal["kind"]): SubjectKind {
+  if (kind === "human") return "human";
+  // An unknown kind is refused, never read as an agent.
+  if (PRINCIPAL_KINDS.includes(kind)) return "agent";
+  throw new Error(`unknown principal kind "${String(kind)}"`);
+}
+
 async function context(who: Principal): Promise<PrincipalContext> {
   const id = await subjectId(who.id);
-  return { principalId: id, kind: who.kind, chain: [{ id, kind: who.kind }], scopes: SCOPES };
+  return { principalId: id, kind: who.kind, chain: [{ id, kind: subjectKind(who.kind) }], scopes: SCOPES };
+}
+
+async function subject(kind: SubjectKind, id: string): Promise<Subject> {
+  return { kind, id: await subjectId(id) };
 }
 
 // The best role the principal has on the book, or null when it has none. An unknown book gives null.
@@ -41,16 +55,21 @@ export function createAccess(store: Store) {
     async create(who: Principal, book: string): Promise<void> {
       await sharing.createResource(await context(who), { id: await resourceId(book), type: TYPE });
     },
-    async share(who: Principal, book: string, subject: string, role: ShareRole): Promise<void> {
-      const [resource, to] = [await resourceId(book), await subjectId(subject)];
-      // A grant overwrites the old one. Without this check the owner could lower itself and leave the book with no owner.
-      if ((await store.get("grants", `${resource}:${to}`))?.role === "owner") throw new Error("an owner keeps the owner role");
-      await sharing.grant(await context(who), resource, to, role);
+    // Remove the book from the sharing store with its grants, invites, links, and audit entries. Only an owner may.
+    async erase(who: Principal, book: string): Promise<void> {
+      await sharing.deleteResource(await context(who), await resourceId(book));
     },
-    async unshare(who: Principal, book: string, subject: string): Promise<void> {
+    async share(who: Principal, book: string, to: { kind: SubjectKind; id: string }, role: ShareRole): Promise<void> {
+      const [resource, target] = [await resourceId(book), await subject(to.kind, to.id)];
+      // A grant overwrites the old one. Without this check the owner could lower itself and leave the book with no owner.
+      if ((await store.get("grants", `${resource}:${target.kind}:${target.id}`))?.role === "owner") throw new Error("an owner keeps the owner role");
+      await sharing.grant(await context(who), resource, target, role);
+    },
+    async unshare(who: Principal, book: string, from: { kind: SubjectKind; id: string }): Promise<void> {
+      const [resource, target] = [await resourceId(book), await subject(from.kind, from.id)];
       // Revoking a share that does not exist must not look like success.
-      if ((await store.get("grants", `${await resourceId(book)}:${await subjectId(subject)}`)) === null) throw new NoShare(subject);
-      await sharing.revokeGrant(await context(who), await resourceId(book), await subjectId(subject));
+      if ((await store.get("grants", `${resource}:${target.kind}:${target.id}`)) === null) throw new NoShare(from.id);
+      await sharing.revokeGrant(await context(who), resource, target);
     },
   };
 }

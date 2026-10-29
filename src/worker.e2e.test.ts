@@ -134,7 +134,7 @@ describe("bearer keys", () => {
 
   test("a valid key works, and the edit carries the key's principal and kind", async () => {
     expect((await call("keys", "POST", API, { ...as(KEY_A), body: { book: "b" } })).status).toBe(201);
-    expect((await call("keys", "PUT", `${API}/b/share`, { ...as(KEY_A), body: { subject: "ana", role: "editor" } })).status).toBe(200);
+    expect((await call("keys", "PUT", `${API}/b/share`, { ...as(KEY_A), body: { kind: "human", subject: "ana", role: "editor" } })).status).toBe(200);
     expect((await call("keys", "PUT", `${API}/b/range`, { ...as(KEY_A), body: { anchor: "A1", values: [[2, "=A1*3"]] } })).json()).toEqual({ ok: true, rows: 1 });
     await call("keys", "PUT", `${API}/b/range`, { ...as(KEY_H), body: { anchor: "A2", values: [[5]] } });
     const read = (await call("keys", "GET", `${API}/b/range?range=A1:B2`, as(KEY_H))).json();
