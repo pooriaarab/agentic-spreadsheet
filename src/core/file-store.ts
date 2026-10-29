@@ -1,8 +1,9 @@
-import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, linkSync, utimesSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import {
   assertBlobPutOptions,
+  assertCollection,
   assertId,
   assertResponseHeaders,
   parseRegion,
@@ -40,6 +41,12 @@ function readOld(dir: string): Map<string, Map<string, Doc>> | null {
       const table = new Map<string, Doc>();
       for (const [id, row] of Object.entries(rows)) {
         if (!isObject(row) || !isObject(row.doc)) throw new Error(`"${path}" is not an agentic-spreadsheet data file`);
+        try {
+          assertCollection(name);
+          assertId(id);
+        } catch {
+          throw new Error(`"${path}" has a name or id that this version does not accept: "${name}/${id}"`);
+        }
         table.set(id, row.doc as Doc);
       }
       tables.set(name, table);
@@ -72,8 +79,6 @@ function readOld(dir: string): Map<string, Map<string, Doc>> | null {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const MAX_ATTEMPTS = 50;
-/** Dirs whose data this process has seen in the new format. */
-const current = new Set<string>();
 
 /** Runs `use` again while it loses to another writer, as the Store port asks of a transaction. Other errors pass. */
 async function retrying<R>(use: () => Promise<R>): Promise<R> {
@@ -118,13 +123,16 @@ async function withMigrationLock<R>(path: string, use: () => Promise<R>): Promis
       if (Date.now() - statSync(lock).mtimeMs > 10_000 || (Number.isInteger(pid) && pid > 0 && isDead(pid))) {
         const aside = `${lock}.stale.${randomUUID()}`;
         renameSync(lock, aside);
-        // A lock that changed in between is a newer one. Put it back unless another already exists.
-        if (readFileSync(aside, "utf8") !== seen) {
-          try {
-            linkSync(aside, lock);
-          } catch {}
+        try {
+          // A lock that changed in between is a newer one. Put it back unless another already exists.
+          if (readFileSync(aside, "utf8") !== seen) {
+            try {
+              linkSync(aside, lock);
+            } catch {}
+          }
+        } finally {
+          rmSync(aside, { force: true });
         }
-        rmSync(aside, { force: true });
         continue;
       }
     } catch {
@@ -133,14 +141,27 @@ async function withMigrationLock<R>(path: string, use: () => Promise<R>): Promis
     if (Date.now() > deadline) throw new StoreConflictError(`could not lock "${lock}" within 30000 ms`);
     await sleep(20 + Math.random() * 30);
   }
+  // Touch the lock while the move runs, so a slow one is not taken over as stale.
+  const beat = setInterval(() => {
+    try {
+      const now = new Date();
+      utimesSync(lock, now, now);
+    } catch {}
+  }, 2_000);
+  beat.unref();
   try {
     return await use();
   } finally {
+    clearInterval(beat);
     rmSync(lock, { force: true });
   }
 }
 
-/** A Store kept in `<dir>/store.json`, from agentic-identity. Data that an earlier version wrote there is moved into that format on the first call. */
+/**
+ * A Store kept in `<dir>/store.json`, from agentic-identity. Data that an earlier version wrote there is moved into that format
+ * on the first call. Stop processes that run an earlier version before this one starts. Calls on one store run one at a time,
+ * so a call to the store inside a transaction callback waits for ever: use the `tx` it is given.
+ */
 export function createFileStore(dir: string, options: FileStoreOptions = {}): Store {
   const path = join(dir, "store.json");
   const store = createIdentityFileStore({ ...options, path });
@@ -162,7 +183,6 @@ export function createFileStore(dir: string, options: FileStoreOptions = {}): St
           rmSync(next, { force: true });
         }
       }
-      current.add(path);
     });
   /** True when old data may be here. A file in the new format starts with its `format` key, so a read of it needs no lock and writes nothing. */
   const mayNeedMove = (): boolean => {
@@ -178,14 +198,9 @@ export function createFileStore(dir: string, options: FileStoreOptions = {}): St
   };
   let moved: Promise<void> | undefined;
   const ready = () => {
-    if (current.has(path)) return Promise.resolve();
-    if (!mayNeedMove()) {
-      current.add(path);
-      return Promise.resolve();
-    }
-    moved ??= migrate().catch((error: unknown) => {
+    if (!mayNeedMove()) return Promise.resolve();
+    moved ??= migrate().finally(() => {
       moved = undefined;
-      throw error;
     });
     return moved;
   };
