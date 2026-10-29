@@ -88,8 +88,10 @@ The root export, `agentic-spreadsheet`, also has these helpers.
 - `ctxFromEnv(process.env)` builds the context that the CLI and the MCP server use. It reads `SHEET_DIR`,
   `SHEET_AS`, and `SHEET_KIND`.
 - `OPS` lists the operations that the CLI, the MCP server, and the HTTP API run. Each has a `name`, a
-  `description`, the `args` names, and a `run` function. `OpError` carries the HTTP status (404, 409, or 413).
+  `description`, the `args` names, a `shape` (a Zod shape), and a `run` function. Parse the arguments with
+  `z.object(op.shape)` before you call `run`. `OpError` carries the HTTP status (404, 409, or 413).
 - `SheetError` is the error that a `Workbook` method throws for a bad sheet name, column, width, or position.
+  A bad A1 address throws a plain `Error`.
 - `toBase64(bytes)` and `fromBase64(text)` convert between bytes and base64.
 - `PRINCIPAL_KINDS` lists the five principal kinds. `isMachineMade(kind)` returns `true` for every kind except
   `human`.
@@ -274,9 +276,11 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
 
 ## Limits
 
-- The grid has 16,384 columns (A to XFD) and 1,048,576 rows. A sheet name is at most 256 characters.
-  The constants `MAX_COL`, `MAX_ROW`, and `MAX_SHEET_NAME` hold these values. `MAX_TEXT` (32,767) and
-  `MAX_STRUCTURE_COUNT` (10,000) are the other two limits that the package exports.
+- The grid has 16,384 columns (A to XFD) and 1,048,576 rows. A sheet name is at most 256 UTF-16 code units.
+  It cannot be blank or contain `[ ] : * ? / \ ! '`. The constants `MAX_COL`, `MAX_ROW`, and `MAX_SHEET_NAME`
+  hold these values.
+- A cell holds at most 32,767 characters of text (`MAX_TEXT`). One insert or delete changes at most 10,000
+  rows or columns (`MAX_STRUCTURE_COUNT`).
 - A formula nested more than 100 levels deep, or with more than 1,000 chained operators, gives
   `#DEPTH!` in that cell. Other cells are not affected. A chain of cells has no depth limit.
 - A loop gives `#CIRCULAR` in every cell on the loop, whichever cell you read first.
