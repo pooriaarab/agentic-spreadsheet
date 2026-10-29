@@ -11,6 +11,12 @@ export class NoShare extends Error {
   }
 }
 
+export class NoInvite extends Error {
+  constructor(invite: string) {
+    super(`no invite "${invite}" on this workbook`);
+  }
+}
+
 export class NoLink extends Error {
   constructor(link: string) {
     super(`no link "${link}" on this workbook`);
@@ -116,7 +122,8 @@ export function createAccess(store: Store) {
         id: String(d.id),
         role: d.role as ShareRole,
         signedInOnly: d.signedInOnly === true,
-        ...(typeof d.expiresAt === "number" ? { expiresAt: d.expiresAt } : {}),
+        // An expiry that is not a number counts as expired, as in agentic-identity: it never reads as "never expires".
+        ...(d.expiresAt == null ? {} : { expiresAt: typeof d.expiresAt === "number" && Number.isFinite(d.expiresAt) ? d.expiresAt : 0 }),
         ...(d.revokedAt != null ? { revokedAt: typeof d.revokedAt === "number" ? d.revokedAt : 0 } : {}),
       }));
       return { links, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
@@ -129,10 +136,18 @@ export function createAccess(store: Store) {
     // A link of another book is "no such link" here, even for an owner of both.
     async revokeLink(who: Principal, book: string, linkId: string): Promise<void> {
       const resource = await resourceId(book);
-      if (!/^[\w-]{1,128}$/.test(linkId) || (await store.get("links", linkId))?.resourceId !== resource) throw new NoLink(linkId);
+      const link = /^[\w-]{1,128}$/.test(linkId) ? await store.get("links", linkId) : null;
+      if (link?.resourceId !== resource) throw new NoLink(linkId);
       // Revoking twice keeps the first revoke time.
-      if ((await store.get("links", linkId))?.revokedAt != null) return;
+      if (link.revokedAt != null) return;
       await sharing.revokeLink(await context(who), linkId);
+    },
+    // An invite of another book is "no such invite" here. An accepted invite cannot be revoked: revoke its grant with unshare.
+    async revokeInvite(who: Principal, book: string, inviteId: string): Promise<void> {
+      const resource = await resourceId(book);
+      const invite = /^[\w-]{1,128}$/.test(inviteId) ? await store.get("invites", inviteId) : null;
+      if (invite?.resourceId !== resource) throw new NoInvite(inviteId);
+      await sharing.revokeInvite(await context(who), inviteId);
     },
     async unshare(who: Principal, book: string, from: { kind: SubjectKind; id: string }): Promise<void> {
       const [resource, target] = [await resourceId(book), await subject(from.kind, from.id)];

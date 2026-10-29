@@ -77,6 +77,11 @@ export const SHARE_OPS: ShareOp[] = [
     run: (a: { book: string; role: "viewer" | "commenter" | "editor"; email?: string; handle?: string; expiresInMs?: number }, client) => client.invite(a),
   },
   {
+    name: "uninvite", description: "Revoke an invite of a workbook, through the Worker. An accepted invite cannot be revoked: use unshare. Owner only.", args: ["book"],
+    shape: { book, invite: z.string().min(1).describe("Invite id.") },
+    run: (a: { book: string; invite: string }, client) => client.uninvite(a),
+  },
+  {
     name: "links", description: "List the share links on a workbook, through the Worker. Owner only. A link shows no token. Up to 100 a page: pass nextCursor back as cursor.", args: ["book"],
     shape: { book, limit: whole(100).describe("Links a page, 100 at most."), cursor }, readOnly: true,
     run: (a: { book: string; limit?: number; cursor?: string }, client) => client.links(a),

@@ -73,6 +73,27 @@ describe("invites and share links", () => {
     expect((await call(a, "ana", "GET", "/two/links")).json.links[0].revokedAt).toBeUndefined();
   });
 
+  test("the owner revokes an invite, an invite of another book is 404, and an accepted invite stays", async () => {
+    const a = app();
+    await call(a, "ana", "POST", "", { book: "one" });
+    await call(a, "ana", "POST", "", { book: "two" });
+    const invite = await call(a, "ana", "POST", "/two/invites", { role: "viewer", handle: "helper" });
+    expect((await call(a, "ana", "DELETE", `/one/invites/${invite.json.id}`)).status).toBe(404);
+    expect((await call(a, "ana", "DELETE", "/one/invites/missing")).status).toBe(404);
+    await call(a, "ana", "PUT", "/two/share", { kind: "human", subject: "ed", role: "editor" });
+    expect((await call(a, "ed", "DELETE", `/two/invites/${invite.json.id}`)).status).toBe(403);
+    expect((await call(a, "ana", "DELETE", `/two/invites/${invite.json.id}`)).status).toBe(200);
+    expect((await call(a, "ana", "GET", "/two/invites")).json.invites[0].revokedAt).toBeTypeOf("number");
+  });
+
+  test("a stored link with a bad expiry lists as expired, not as never expiring", async () => {
+    const store = createMemoryStore();
+    const a = app(store);
+    await call(a, "ana", "POST", "", { book: "b" });
+    await store.put("links", "odd", { id: "odd", resourceId: await resourceId("b"), role: "viewer", tokenHash: "x", signedInOnly: false, expiresAt: "soon" });
+    expect((await call(a, "ana", "GET", "/b/links")).json.links).toMatchObject([{ id: "odd", expiresAt: 0 }]);
+  });
+
   test("a stored link with a role of owner is not listed", async () => {
     const store = createMemoryStore();
     const a = app(store);

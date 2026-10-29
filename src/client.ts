@@ -163,6 +163,8 @@ export function createClient({ baseUrl, token, fetch: fetchImpl }: ClientOptions
     /** `POST /:book/invites`. Invite a person by `email` or an agent by `handle`. The role is not owner. Only the owner may. */
     invite: ({ book: id, ...body }: { book: string; role: ShareRole; email?: string; handle?: string; expiresInMs?: number }, opts: CallOptions = {}) =>
       json<{ id: string }>("POST", `${book(id)}/invites`, opts, { body }),
+    /** `DELETE /:book/invites/:invite`. An accepted invite cannot be revoked: use `unshare`. */
+    uninvite: ({ book: id, invite }: { book: string; invite: string }, opts: CallOptions = {}) => json<{ ok: true }>("DELETE", `${book(id)}/invites/${segment(invite)}`, opts),
     /** `GET /:book/links`. Only the owner may list. A link shows no token. */
     links: ({ book: id, ...query }: { book: string; limit?: number; cursor?: string }, opts: CallOptions = {}) =>
       json<{ links: LinkSummary[]; nextCursor?: string }>("GET", `${book(id)}/links`, opts, { query }),

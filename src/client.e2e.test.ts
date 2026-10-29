@@ -109,6 +109,8 @@ describe("client against the Worker", () => {
     const invite = await bot.invite({ book: "trip", role: "viewer", handle: "helper" });
     const link = await bot.link({ book: "trip", role: "viewer", expiresInMs: 60_000 });
     expect((await bot.invites({ book: "trip" })).invites.map((i) => i.id)).toEqual([invite.id]);
+    expect(await bot.uninvite({ book: "trip", invite: invite.id })).toEqual({ ok: true });
+    expect((await failure(bot.uninvite({ book: "trip", invite: invite.id + "x" }))).code).toBe("not_found");
     expect((await bot.links({ book: "trip" })).links).toMatchObject([{ id: link.id, role: "viewer", signedInOnly: false }]);
     expect(await bot.unlink({ book: "trip", link: link.id })).toEqual({ ok: true });
     expect((await failure(bot.unlink({ book: "trip", link: link.id + "x" }))).code).toBe("not_found");

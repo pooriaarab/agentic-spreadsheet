@@ -62,7 +62,7 @@ try {
 
 Methods: `list`, `create`, `read`, `write`, `setFormula`, `insertRows`, `deleteRows`, `insertCols`,
 `deleteCols`, `sheets`, `addSheet`, `deleteSheet`, `exportCsv`, `importCsv`, `share`, `shares`, `unshare`,
-`invite`, `invites`, `link`, `links`, `unlink`, `remove`, and `health`. Each takes the same fields as its route, plus an optional
+`invite`, `invites`, `uninvite`, `link`, `links`, `unlink`, `remove`, and `health`. Each takes the same fields as its route, plus an optional
 `{ signal }` as the second argument to cancel the call. Pass `fetch` to `createClient` to use your own.
 
 A failed call throws `SheetsApiError` with the HTTP `status` and a `code`: `bad_request` (400),
@@ -145,6 +145,7 @@ npx agentic-spreadsheet share budget --subject ana --subject-kind human --role e
 npx agentic-spreadsheet shares budget                                                   # list the roles (owner only)
 npx agentic-spreadsheet unshare budget --subject ana --subject-kind human               # take it away
 npx agentic-spreadsheet invite budget --role viewer --email ada@example.com             # invite a person (or --handle <h> for an agent)
+npx agentic-spreadsheet uninvite budget --invite <id>                                   # withdraw an invite that nobody accepted
 npx agentic-spreadsheet link budget --role viewer --signed-in-only true                 # make a share link: the token shows once
 npx agentic-spreadsheet links budget                                                    # list the links (no tokens)
 npx agentic-spreadsheet unlink budget --link <id>                                       # revoke a link
@@ -164,6 +165,7 @@ Every sharing call needs the owner role:
 | Take a role | `unshare` | `unshare` | `sheet_unshare` | `DELETE /:book/share/:kind/:subject` |
 | Invite by email or handle | `invite` | `invite` | `sheet_invite` | `POST /:book/invites` |
 | List the invites | `invites` | `invites` | `sheet_invites` | `GET /:book/invites` |
+| Revoke an invite | `uninvite` | `uninvite` | `sheet_uninvite` | `DELETE /:book/invites/:invite` |
 | Make a share link | `link` | `link` | `sheet_link` | `POST /:book/links` |
 | List the links | `links` | `links` | `sheet_links` | `GET /:book/links` |
 | Revoke a share link | `unlink` | `unlink` | `sheet_unlink` | `DELETE /:book/links/:link` |
@@ -231,7 +233,7 @@ curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/
 | `GET /:book/export` and `POST /:book/import` | `export` (CSV) and `import` |
 | `GET /:book/shares?limit=&cursor=` | List the roles on the workbook (owner only). A subject shows as a hash |
 | `PUT /:book/share` and `DELETE /:book/share/:kind/:subject` | Give a person (`human`) or an agent (`agent`) a role (`viewer`, `commenter`, `editor`), and take it back |
-| `GET` and `POST /:book/invites`, `GET` and `POST /:book/links`, `DELETE /:book/links/:link` | List and make invites and share links, and revoke a link (owner only). See the sharing table above |
+| `GET` and `POST /:book/invites`, `DELETE /:book/invites/:invite`, `GET` and `POST /:book/links`, `DELETE /:book/links/:link` | List and make invites and share links, and revoke a link (owner only). See the sharing table above |
 | `DELETE /:book` | The owner deletes the workbook, and its grants, invites, links, and audit entries go with it |
 
 The key sets who writes, so a body cannot name another principal. The Worker reads each request through the

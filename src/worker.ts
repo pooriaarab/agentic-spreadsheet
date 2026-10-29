@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { createAccess, NoLink, NoShare, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
+import { createAccess, NoInvite, NoLink, NoShare, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
 import { EraseRefusedError, hasScope, parseRegion, type Auth, type Blobs, type PrincipalContext, type Role, type Region, type Store } from "agentic-identity";
@@ -160,6 +160,15 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
     const parsed = inviteBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: message(parsed.error) }, 400);
     return c.json(await access.invite(c.get("who"), c.req.param("book"), parsed.data), 201);
+  });
+  api.delete("/:book/invites/:invite", async (c) => {
+    const denied = await guard(c, "admin", c.req.param("book"));
+    if (denied !== null) return denied;
+    await access.revokeInvite(c.get("who"), c.req.param("book"), c.req.param("invite")).catch((error: unknown) => {
+      if (error instanceof NoInvite) throw new OpError(error.message, 404);
+      throw error;
+    });
+    return c.json({ ok: true });
   });
   api.get("/:book/links", async (c) => {
     const denied = await guard(c, "admin", c.req.param("book"));
