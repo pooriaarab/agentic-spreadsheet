@@ -237,7 +237,7 @@ If the Worker fails after it saves a new workbook and before it records the owne
 
 `createApp` from `agentic-spreadsheet/worker` builds the Hono app that serves the API above. It takes:
 
-- `store` and `blobs`: the `Store` and `Blobs` ports of `agentic-identity`. Use `createMemoryStore()` and `createMemoryBlobs()` for tests. A Cloudflare Worker uses the D1 and R2 adapters of `agentic-identity/cloudflare`.
+- `store` and `blobs`: the `Store` and `Blobs` ports of `agentic-identity`. Use `createMemoryStore()` and `createMemoryBlobs()` for tests. A Cloudflare Worker uses the D1 and R2 adapters of `agentic-identity/cloudflare`. Run `D1_SCHEMA` on the database once first, or call `storageFor(env)` from `agentic-spreadsheet/worker`, which runs it and builds both adapters from the `DB` and `BLOBS` bindings.
 - `authenticate`: an async function that reads a request and resolves to the caller, or `null`. The caller is `{ id, kind, scopes? }`. Scopes, when set, limit what the caller may do. Without them, the role alone decides. A `null` answers 401 on the `/api/v1/sheets` routes. `GET /health` needs no key. `fromAuth(auth)` from the same entry adapts an `Auth` port of `agentic-identity`.
 - `pack` (optional): the name that `GET /health` returns. The default is `agentic-spreadsheet`.
 
