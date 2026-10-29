@@ -1,7 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { openDocument, peerLabel } from "agentic-realtime/browser";
+import type { Peer as RoomPeer } from "agentic-realtime/client";
 import type { PresenceEntry } from "agentic-design/react";
 import { cursorOf } from "./grid.js";
+import type { RoomPresence } from "./host.js";
 
 export interface Peer {
   entry: PresenceEntry;
@@ -20,9 +22,15 @@ class TokenSocket extends WebSocket {
   }
 }
 
+const toPeer = (peer: RoomPeer): Peer => ({
+  entry: { id: String(peer.clientId), name: peer.name, kind: peer.machine ? "agent" : "person", status: "active" },
+  cursor: cursorOf(peer.cursor),
+  label: peerLabel(peer),
+});
+
 // Join the presence room of a workbook. The room carries who is here and where their cursor is.
-// Cells do not travel through it: the API stores them.
-export function usePresence(book: string, token: string | undefined, cursor: string, name = "Me") {
+// Cells do not travel through it: the API stores them. With `host`, the app's own room is used, and no room is opened.
+export function usePresence(book: string, token: string | undefined, cursor: string, name = "Me", host?: RoomPresence) {
   const [peers, setPeers] = useState<Peer[]>([]);
   const [live, setLive] = useState<Live>(token === undefined ? "disconnected" : "connecting");
   const client = useRef<Awaited<ReturnType<typeof openDocument>>["client"] | null>(null);
@@ -42,15 +50,7 @@ export function usePresence(book: string, token: string | undefined, cursor: str
         if (closed) return void opened.disconnect();
         client.current = opened;
         opened.setPresence({ cursor: latest.current });
-        stop = opened.onPeers((list) =>
-          setPeers(
-            list.map((peer) => ({
-              entry: { id: String(peer.clientId), name: peer.name, kind: peer.machine ? "agent" : "person", status: "active" },
-              cursor: cursorOf(peer.cursor),
-              label: peerLabel(peer),
-            })),
-          ),
-        );
+        stop = opened.onPeers((list) => setPeers(list.map(toPeer)));
       })
       .catch(() => !closed && setLive("disconnected"));
     return () => {
@@ -61,6 +61,17 @@ export function usePresence(book: string, token: string | undefined, cursor: str
     };
   }, [book, token, name]);
 
-  useEffect(() => client.current?.setPresence({ cursor }), [cursor]);
+  // The app's room. The cursor leaves it with the sheet, and the room itself stays open.
+  useEffect(() => {
+    if (!host) return;
+    setPeers(host.peers.map(toPeer));
+    const stop = host.onPeers((list) => setPeers(list.map(toPeer)));
+    return () => {
+      stop();
+      host.setPresence({ cursor: null });
+    };
+  }, [host]);
+
+  useEffect(() => (host ?? client.current)?.setPresence({ cursor }), [cursor, host]);
   return { peers, live };
 }

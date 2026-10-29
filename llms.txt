@@ -18,7 +18,7 @@ Keywords: spreadsheet,sheets,formulas,grid,collaboration,agents,mcp,cli,csv,xlsx
   not_found, conflict, too_large, server_error, or unknown for another status). No retries. Pass
   { signal } to cancel.
 - CLI and MCP sharing: share, shares, and unshare (MCP: sheet_share, sheet_shares, sheet_unshare) call a Worker. Set SHEET_URL and SHEET_TOKEN. A share takes --subject and --subject-kind (human or agent) and --role. There are no share links.
-- Mountable UI: import { mount } from "agentic-spreadsheet/ui" and import "agentic-spreadsheet/ui.css".
+- Mountable UI: import { mount } from "agentic-spreadsheet/ui" and import "agentic-spreadsheet/ui.css". mount(element, { docId, principal, host: { doc, presence?, status?, onStatus? } }) shows a Y.Doc that your app keeps in its own room; the sheet then calls no client and opens no room.
   mount(element, { client, docId, principal: { kind, name }, readOnly?, token?, onUnauthorized? }) renders the
   sheet into the element and returns { update(options), unmount() }. A principal without a known kind throws
   TypeError. Also exports WorkbookView (React component, needs agentic-design providers). React and react-dom

@@ -118,12 +118,20 @@ export class Workbook {
     this.doc = doc;
     this.sheets = doc.getArray("sheets");
     this.checkKeys();
-    this.sheets.observeDeep((events) => {
-      for (const event of events) this.watchKeys(event);
-      // A write to a cell or a width changes neither the order nor the names, so it keeps both caches.
-      if (events.some(({ path }) => !(path.length === 2 && (path[1] === "cells" || path[1] === "widths")))) this.invalidate();
-    });
+    this.sheets.observeDeep(this.watch);
     this.migrate();
+  }
+
+  private readonly watch = (events: Y.YEvent<Y.AbstractType<unknown>>[]) => {
+    for (const event of events) this.watchKeys(event);
+    // A write to a cell or a width changes neither the order nor the names, so it keeps both caches.
+    if (events.some(({ path }) => !(path.length === 2 && (path[1] === "cells" || path[1] === "widths")))) this.invalidate();
+  };
+
+  // Stop watching the document. Call it when you are done with a workbook whose document lives on. Read the workbook
+  // no more after it: its caches no longer follow the document.
+  dispose(): void {
+    this.sheets.unobserveDeep(this.watch);
   }
 
   // True when two copies each converted an old workbook and then merged. Each copy made its own
