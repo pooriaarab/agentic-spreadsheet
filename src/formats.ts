@@ -4,7 +4,7 @@ import type { Cell as FileCell, Workbook as FileBook } from "agentic-formats";
 import { parseRange } from "./core/a1.js";
 import { inferCell } from "./core/csv.js";
 import { Engine } from "./core/engine.js";
-import { SheetError, Workbook, type CellInput, type Principal } from "./core/workbook.js";
+import { PRINCIPAL_KINDS, SheetError, Workbook, type CellInput, type Principal } from "./core/workbook.js";
 
 export type SheetFormat = "ods" | "xlsx";
 export const MIME: Record<SheetFormat, string> = {
@@ -23,13 +23,16 @@ const numberFormats = new Set<string>(NUMBER_FORMATS);
 /** The workbook as a neutral one. A formula cell carries the value the engine gives it. */
 export function toFileBook(book: Workbook): FileBook {
   const engine = new Engine(book);
+  // The cost follows the grids, so the limit counts the used ranges of all the sheets.
+  let grid = 0;
   try {
     const sheets = book.sheetNames().map((name) => {
       const cells: Record<string, FileCell> = {};
       const extent = book.extent(name);
       if (extent) {
         const { c2, r2 } = parseRange(extent);
-        if (c2 * r2 > DEFAULT_LIMITS.maxCells) throw new SheetError(`the sheet ${name} is too large to export`);
+        grid += c2 * r2;
+        if (c2 * r2 > DEFAULT_LIMITS.maxCells || grid > DEFAULT_LIMITS.maxCells) throw new SheetError(`the sheet ${name} is too large to export`);
         const read = book.readRange(name, extent);
         const values = engine.values(name, extent);
         read.forEach((row, r) =>
@@ -63,25 +66,47 @@ export function exportFile(format: SheetFormat, book: Workbook): { bytes: Uint8A
 /** The most sheets one import adds. */
 export const MAX_IMPORT_SHEETS = 100;
 
-/** Names are compared without case, as the workbook does. */
-function freeName(taken: Set<string>, wanted: string): string {
+/** The longest sheet name that XLSX holds. */
+const MAX_NAME = 31;
+
+/** Names are compared without case, as the workbook does. A name is cut to the XLSX maximum. */
+function freeName(taken: Set<string>, requested: string): string {
+  const wanted = requested.slice(0, MAX_NAME);
   if (!taken.has(wanted.toLowerCase())) return wanted;
   for (let n = 2; ; n++) {
-    const next = `${wanted.slice(0, 31 - ` (${n})`.length)} (${n})`;
+    const next = `${wanted.slice(0, MAX_NAME - ` (${n})`.length)} (${n})`;
     if (!taken.has(next.toLowerCase())) return next;
   }
 }
 
-function writeSheets(book: Workbook, model: FileBook, by: Principal): string[] {
-  if (model.sheets.length > MAX_IMPORT_SHEETS) throw new SheetError(`a file can add up to ${MAX_IMPORT_SHEETS} sheets at a time`);
-  let grid = 0;
-  const taken = new Set(book.sheetNames().map((n) => n.toLowerCase()));
-  const names: string[] = [];
-  for (const sheet of model.sheets) {
+/**
+ * The name each sheet gets in the workbook. A name that is taken, or has a banned character, changes. A formula names
+ * a sheet as text, and the text would then point at another sheet, or at none, so a formula that names a changed sheet is refused.
+ */
+function renamed(model: FileBook, taken: Set<string>): string[] {
+  const names = model.sheets.map((sheet) => {
     const name = freeName(taken, sheet.name.replace(/[[\]:*?/\\!']/g, "_"));
     taken.add(name.toLowerCase());
+    return name;
+  });
+  const formulas = model.sheets.flatMap((sheet) => Object.values(sheet.cells).flatMap((cell) => (cell.formula ? [cell.formula.toLowerCase()] : [])));
+  model.sheets.forEach((sheet, i) => {
+    if (names[i] !== sheet.name && formulas.some((f) => f.includes(sheet.name.toLowerCase()))) {
+      throw new SheetError(`the sheet "${sheet.name}" would be renamed "${names[i]}", and a formula names it`);
+    }
+  });
+  return names;
+}
+
+function writeSheets(book: Workbook, model: FileBook, by: Principal): string[] {
+  if (model.sheets.length > MAX_IMPORT_SHEETS) throw new SheetError(`a file can add up to ${MAX_IMPORT_SHEETS} sheets at a time`);
+  if (by.id === "" || !PRINCIPAL_KINDS.includes(by.kind)) throw new SheetError("invalid principal");
+  let grid = 0;
+  const taken = new Set(book.sheetNames().map((n) => n.toLowerCase()));
+  const names = renamed(model, taken);
+  for (const [i, sheet] of model.sheets.entries()) {
+    const name = names[i]!;
     book.addSheet(name);
-    names.push(name);
     let rows = 0;
     let cols = 0;
     const placed: [number, number, FileCell][] = [];
@@ -99,7 +124,7 @@ function writeSheets(book: Workbook, model: FileBook, by: Principal): string[] {
     if (grid > DEFAULT_LIMITS.maxCells) throw new SheetError(`the sheet ${sheet.name} is too large to import`);
     const matrix: CellInput[][] = Array.from({ length: rows }, () => Array<CellInput>(cols).fill(null));
     for (const [c, r, cell] of placed) {
-      matrix[r - 1]![c - 1] = cell.formula ? `=${cell.formula}` : typeof cell.value === "string" && cell.value.startsWith("=") ? inferCell(cell.value, true) : (cell.value ?? null);
+      matrix[r - 1]![c - 1] = cell.formula ? `=${cell.formula}` : typeof cell.value === "string" && cell.value.startsWith("=") && cell.value.length > 1 ? inferCell(cell.value, true) : (cell.value ?? null);
     }
     book.writeRange(name, "A1", matrix, by);
     for (const [c, r, cell] of placed) if (cell.format) book.setFormat(name, refOf(c, r), { numberFormat: cell.format }, by);

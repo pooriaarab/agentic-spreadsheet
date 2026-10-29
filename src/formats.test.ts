@@ -15,6 +15,9 @@ import { addSheets, exportFile, formatOf, importFile, MAX_IMPORT_SHEETS, MIME, t
 // - 101 sheets, a file over the size limit, or bytes that are no file pass
 // - an imported cell loses the author kind of the importer, or takes a human kind by default
 // - an export of a sheet over the cell limit runs
+// - a formula that names a sheet reads another sheet after the sheet is renamed on import
+// - an import of empty sheets takes a bad principal, or a lone = changes on the way through
+// - the export limit counts one sheet at a time, or a long name is cut only when it clashes
 // - a name with an upper-case or unknown extension picks a format
 
 const human: Principal = { id: "u1", kind: "human" };
@@ -87,6 +90,15 @@ describe("the neutral workbook", () => {
     expect(toFileBook(book).sheets[0]!.cells.A1).toEqual({ value: 1 });
   });
 
+  test("guarded text leaves the workbook without its apostrophe, and a lone = stays text", () => {
+    const book = fresh();
+    book.writeRange("Sheet1", "A1", [["'=x", "="]], human);
+    expect(toFileBook(book).sheets[0]!.cells).toEqual({ A1: { value: "=x" }, B1: { value: "=" } });
+    const target = fresh();
+    const [name] = importFile("xlsx", exportFile("xlsx", book).bytes, target, human).names;
+    expect(target.readRange(name!, "A1:B1")[0]!.map((c) => c.value)).toEqual(["'=x", "="]);
+  });
+
   test("an empty sheet exports as a sheet with no cells", () => {
     expect(toFileBook(fresh()).sheets).toEqual([{ name: "Sheet1", cells: {} }]);
   });
@@ -120,6 +132,35 @@ describe("limits and bad input", () => {
     expect(two.sheetNames()).toEqual(["Sheet1"]);
   });
 
+  test("a formula that names a sheet that is renamed is refused, and one that is not renamed is kept", () => {
+    const file: FileBook = { sheets: [{ name: "Summary", cells: { A1: { formula: "Data!A1" } } }, { name: "Data", cells: { A1: { value: "NEW" } } }] };
+    const taken = fresh();
+    taken.addSheet("Data");
+    taken.writeRange("Data", "A1", [["OLD"]], human);
+    expect(() => addSheets(taken, file, human)).toThrow(/would be renamed "Data \(2\)", and a formula names it/);
+    expect(taken.sheetNames()).toEqual(["Sheet1", "Data"]);
+    const clean = fresh();
+    addSheets(clean, file, human);
+    const engine = new Engine(clean);
+    expect(engine.values("Summary", "A1")[0]![0]).toBe("NEW");
+    engine.dispose();
+  });
+
+  test("a bad principal is refused even when every sheet is empty", () => {
+    const target = fresh();
+    const empty: FileBook = { sheets: [{ name: "E", cells: {} }] };
+    expect(() => addSheets(target, empty, { id: "", kind: "human" })).toThrow(/invalid principal/);
+    expect(() => addSheets(target, empty, { id: "x", kind: "nope" as never })).toThrow(/invalid principal/);
+    expect(target.sheetNames()).toEqual(["Sheet1"]);
+  });
+
+  test("a long name is cut to 31 characters, with or without a clash", () => {
+    const long = "L".repeat(40);
+    const target = fresh();
+    expect(addSheets(target, { sheets: [{ name: long, cells: {} }] }, human)).toEqual(["L".repeat(31)]);
+    expect(addSheets(target, { sheets: [{ name: long, cells: {} }] }, human)).toEqual([`${"L".repeat(27)} (2)`]);
+  });
+
   test(`more than ${MAX_IMPORT_SHEETS} sheets are refused`, () => {
     const sheets = Array.from({ length: MAX_IMPORT_SHEETS + 1 }, (_, i) => ({ name: `S${i}`, cells: {} }));
     const target = fresh();
@@ -142,6 +183,16 @@ describe("limits and bad input", () => {
     book.writeRange("Sheet1", "A1", [[1]], human);
     book.writeRange("Sheet1", "ZZ2000", [[1]], human);
     expect(() => exportFile("ods", book)).toThrow(/sheet Sheet1 is too large to export/);
+  });
+
+  test("the export limit counts the used ranges of all the sheets", () => {
+    const book = fresh();
+    // Each used range is 26 x 20,000 = 520,000 cells: one fits, and two do not.
+    for (const name of ["Sheet1", "Two"]) {
+      if (name !== "Sheet1") book.addSheet(name);
+      book.writeRange(name, "Z20000", [[1]], human);
+    }
+    expect(() => exportFile("xlsx", book)).toThrow(/sheet Two is too large to export/);
   });
 });
 
