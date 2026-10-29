@@ -71,6 +71,26 @@ A failed call throws `SheetsApiError` with the HTTP `status` and a `code`: `bad_
 a 2xx answer that is not JSON (for example from a wrong `baseUrl`) throws the error that `fetch` or `json()` throws. The client never retries. A write that fails may have landed:
 read the book before you send it again.
 
+### Other exports
+
+The root export, `agentic-spreadsheet`, also has these helpers.
+
+- A1 helpers. `parseCell("B2")` returns `{ col: 2, row: 2 }`, and `formatCell` turns it back into `"B2"`.
+  `parseRange("A1:C3")` returns `{ c1, r1, c2, r2 }`. `colIndex("AA")` returns `27`, and `colLetters(27)`
+  returns `"AA"`. `parseCell` and `parseRange` throw on bad text.
+- CSV helpers. `parseCsv(text)` returns rows of strings. `formatCsv(rows)` writes CRLF rows and marks text
+  that starts with `= + - @`. `inferCell(text)` turns one field into a number, a boolean, a formula, or text.
+- Stores. `createMemoryStore()` and `createMemoryBlobs()` keep data in memory, for tests. `createFileStore(dir)`
+  and `createFileBlobs(dir)` keep data in files, as the CLI does. A write that loses a race throws
+  `StoreConflictError`.
+- `ctxFromEnv(process.env)` builds the context that the CLI and the MCP server use. It reads `SHEET_DIR`,
+  `SHEET_AS`, and `SHEET_KIND`.
+- `OPS` lists the operations that the CLI, the MCP server, and the HTTP API run. Each has a `name`, a
+  `description`, the `args` names, and a `run` function. `OpError` carries the HTTP status (404, 409, or 413).
+- `PRINCIPAL_KINDS` lists the five principal kinds. `isMachineMade(kind)` returns `true` for every kind except
+  `human`.
+- `VERSION` is the package version.
+
 ## CLI and MCP server
 
 ```sh
@@ -250,6 +270,7 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
 
 ## Limits
 
+- The grid has 16,384 columns (A to XFD) and 1,048,576 rows. A sheet name is at most 256 characters.
 - A formula nested more than 100 levels deep, or with more than 1,000 chained operators, gives
   `#DEPTH!` in that cell. Other cells are not affected. A chain of cells has no depth limit.
 - A loop gives `#CIRCULAR` in every cell on the loop, whichever cell you read first.
