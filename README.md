@@ -176,7 +176,7 @@ The API keys live in a Worker secret, never in the repo or in CI. Set them with
 ## HTTP API
 
 The Worker serves the same operations under `/api/v1/sheets`. Run `npm run build` first, because `wrangler.jsonc`
-serves `dist/ui` and wrangler needs that directory. Then run `npx wrangler dev`.
+serves `dist/ui` and wrangler needs that directory. Then run `WRANGLER_SEND_METRICS=false npx wrangler dev`.
 
 Workbooks live in a D1 database (binding `DB`) and an R2 bucket (binding `BLOBS`), both declared in
 `wrangler.jsonc`. They survive a restart. `wrangler dev` keeps them in `.wrangler/state`. To deploy, create the
@@ -345,7 +345,6 @@ Run it from a checkout:
 
 ```sh
 npm ci
-npm run build                      # builds the Worker and the UI into dist/
 npm run dev                        # makes .dev.vars with a random key on the first run, and prints the key
 ```
 

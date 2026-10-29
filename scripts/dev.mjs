@@ -17,3 +17,4 @@ const child = spawn("npx", ["wrangler", "dev", ...process.argv.slice(2)], {
   env: { ...process.env, WRANGLER_SEND_METRICS: "false" },
 });
 child.on("exit", (code) => process.exit(code ?? 1));
+for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => child.kill(signal));
