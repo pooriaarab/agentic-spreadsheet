@@ -143,7 +143,7 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   });
   // Invites and share links. Only the owner. A role is never owner: only a grant makes an owner.
   const page = z.object({ limit: z.coerce.number().int().min(1).max(100).optional(), cursor: z.string().max(512).optional() }).strict();
-  const lifetime = z.number().int().positive().optional();
+  const lifetime = z.number().int().positive().max(10 * 365 * 24 * 3600 * 1000).optional();
   const inviteBody = z.object({ role: z.enum(SHARE_ROLES), email: z.string().min(3).max(254).optional(), handle: z.string().max(64).optional(), expiresInMs: lifetime }).strict()
     .refine((b) => (b.email === undefined) !== (b.handle === undefined), "give an email or a handle, not both");
   const linkBody = z.object({ role: z.enum(SHARE_ROLES), signedInOnly: z.boolean().optional(), expiresInMs: lifetime }).strict();

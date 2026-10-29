@@ -1,4 +1,4 @@
-import { createSharing, type InviteSummary, type PrincipalContext, type Role, type Store, type Subject, type SubjectKind } from "agentic-identity";
+import { createSharing, type PrincipalContext, type Role, type Store, type Subject, type SubjectKind } from "agentic-identity";
 import { PRINCIPAL_KINDS, type Principal } from "./core/workbook.js";
 
 // Who may use a workbook. agentic-identity keeps the roles. A workbook is a resource of type
@@ -88,7 +88,18 @@ export function createAccess(store: Store) {
     async invites(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}) {
       const page = await sharing.listInvites(await context(who), await resourceId(book), { limit: paging.limit ?? 100, cursor: paging.cursor });
       // An invite with an id or a role that is not valid is not honored, so it is not listed.
-      return { ...page, invites: page.invites.filter((i) => typeof i.id === "string" && (SHARE_ROLES as readonly unknown[]).includes(i.role)) as (InviteSummary & { role: ShareRole })[] };
+      const invites = page.invites
+        .filter((i) => typeof i.id === "string" && (SHARE_ROLES as readonly unknown[]).includes(i.role))
+        .map((i) => ({
+          id: i.id,
+          role: i.role as ShareRole,
+          for: i.for,
+          ...(i.handle === undefined ? {} : { handle: i.handle }),
+          ...(i.expiresAt === undefined ? {} : { expiresAt: i.expiresAt }),
+          ...(i.acceptedAt === undefined ? {} : { acceptedAt: i.acceptedAt }),
+          ...(i.revokedAt === undefined ? {} : { revokedAt: i.revokedAt }),
+        }));
+      return { invites, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
     },
     // Invites a person by email or an agent by handle. The role is not owner. Only an owner may.
     async invite(who: Principal, book: string, input: { role: ShareRole; email?: string; handle?: string; expiresInMs?: number }): Promise<{ id: string }> {

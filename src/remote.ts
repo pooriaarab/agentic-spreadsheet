@@ -35,7 +35,7 @@ const subjectKind = z.enum(SUBJECT_KIND_NAMES).describe("A person (human) and an
 
 // The CLI gives text, and a flag with no value gives `true`: only a number or digits pass.
 const whole = (max: number) => z.union([z.number(), z.string().regex(/^\d{1,15}$/).transform(Number)]).pipe(z.number().int().min(1).max(max)).optional();
-const lifetime = whole(Number.MAX_SAFE_INTEGER).describe("How long it lives, in milliseconds.");
+const lifetime = whole(10 * 365 * 24 * 3600 * 1000).describe("How long it lives, in milliseconds.");
 // The CLI gives "true" or "false" as text, and MCP gives a boolean.
 const flag = z.union([z.boolean(), z.enum(["true", "false"]).transform((v) => v === "true")]).optional().describe("Only signed-in people may use it.");
 

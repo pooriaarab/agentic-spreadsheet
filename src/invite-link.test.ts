@@ -31,6 +31,7 @@ describe("invites and share links", () => {
     expect(link.status).toBe(201);
     const invites = await call(a, "ana", "GET", "/b/invites");
     expect(invites.json.invites).toMatchObject([{ id: invite.json.id, for: "email", role: "viewer" }]);
+    expect(Object.keys(invites.json.invites[0]).sort()).toEqual(["expiresAt", "for", "id", "role"]);
     const links = await call(a, "ana", "GET", "/b/links");
     expect(links.json.links).toMatchObject([{ id: link.json.id, role: "commenter", signedInOnly: true }]);
     const text = JSON.stringify([invites.json, links.json]);
@@ -56,6 +57,7 @@ describe("invites and share links", () => {
     for (const body of [{ role: "owner", handle: "bot" }, { role: "viewer" }, { role: "viewer", email: "a@b.co", handle: "bot" }, { role: "viewer", email: "nope" }, { role: "viewer", handle: "bot", expiresInMs: -1 }, { role: "viewer", handle: "bot", expiresInMs: "1" }]) {
       expect((await call(a, "ana", "POST", "/b/invites", body)).status, JSON.stringify(body)).toBe(400);
     }
+    expect((await call(a, "ana", "POST", "/b/links", { role: "viewer", expiresInMs: 1e15 })).json.error).toContain("expiresInMs");
     for (const body of [{ role: "owner" }, { role: "viewer", signedInOnly: "yes" }, { role: "viewer", expiresInMs: 0 }, { role: "viewer", extra: 1 }]) {
       expect((await call(a, "ana", "POST", "/b/links", body)).status, JSON.stringify(body)).toBe(400);
     }

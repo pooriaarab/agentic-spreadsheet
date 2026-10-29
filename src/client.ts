@@ -18,7 +18,6 @@ export interface InviteSummary {
   expiresAt?: number;
   acceptedAt?: number;
   revokedAt?: number;
-  [field: string]: unknown;
 }
 export interface LinkSummary {
   id: string;
