@@ -5,6 +5,12 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-29
+
+### Changed
+
+- The `agentic-design` dependency is now `^0.8.0`. It was `^0.5.0`, which did not accept the newest `agentic-design`, so the agentic-* packages could not be installed together. The code needs no change for 0.6.0 to 0.8.0. The UI renders the same.
+
 ## [0.13.0] - 2026-10-29
 
 ### Added

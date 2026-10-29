@@ -1,6 +1,6 @@
 {
   "name": "agentic-spreadsheet",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "Spreadsheets with formulas that people and agents edit together.",
   "keywords": [
     "spreadsheet",
@@ -76,7 +76,7 @@
   "dependencies": {
     "@formulajs/formulajs": "^4.6.1",
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "agentic-design": "^0.5.0",
+    "agentic-design": "^0.8.0",
     "agentic-formats": "^0.4.2",
     "agentic-identity": "^0.9.0",
     "agentic-realtime": "^0.4.3",
