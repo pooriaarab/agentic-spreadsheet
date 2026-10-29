@@ -85,8 +85,15 @@ A request body is at most 5 MB. `GET /health` needs no key.
   of a cell are separate keys, so two writers on one new cell keep both edits.
   If two writers set the same field, the later write wins.
 - Many sheets in a set order. Add, rename, and delete sheets.
-- Sparse cells keyed by A1 coordinates. Each cell holds a value or a formula, plus a format.
+- Sparse cells. Each cell holds a value or a formula, plus a format.
   Text is at most 32,767 characters. A formula is at most 8,192.
+- Every row and column has an id that never changes. A cell is keyed by the ids of its row and its
+  column, and a formula keeps its refs as ids. An A1 address is the position of those ids, so the SDK,
+  the CLI, the MCP server, and the HTTP API take and return A1. Insert, delete, and move change the
+  order of the ids and nothing else. Two writers who edit one sheet at the same time lose nothing,
+  and a write lands on the row it was meant for, whatever the other writer inserts, deletes, or moves.
+  `moveRows` and `moveCols` are in the SDK.
+- A workbook saved by an older version, with A1 keys, converts when it loads.
 - Column widths and frozen rows.
 - Insert and delete rows and columns. Formula refs follow the moved cells.
   A ref to a deleted cell becomes `#REF!`. A range shrinks or grows to match.
@@ -115,10 +122,12 @@ A request body is at most 5 MB. `GET /health` needs no key.
 - A change to a cell finds the formulas that read it through a range by a scan of all ranges on
   that sheet. A sheet with very many range formulas pays for that scan on each edit.
 - Ref rewriting does not handle whole-column refs such as `A:A`.
-- Insert, delete, and rename need one writer at a time. They move cells and rewrite formulas,
-  and that does not merge. If two clients do it at once, `structureConflict()` turns true after the
-  merge and the workbook refuses writes until someone calls `acceptStructureMerge()`.
-  A value write that races an insert lands at the old address, and nothing flags it.
+- A write to a row that another writer deletes goes with the row. Two writers who move one row at
+  once get one place for it, the same on both copies. Two writers who each convert an old workbook,
+  then insert or move rows before they merge, can lose those row edits. Save the converted workbook
+  before two writers share it.
+- A formula that names a sheet that does not exist yet takes the sheet when it is added. A formula
+  written by one writer while another adds that sheet is not bound until the next rename or add.
 - Two clients that add a sheet with the same name while offline both succeed.
   The merged workbook then holds two sheets with one name.
 - The Worker keeps workbooks in memory, in one isolate. A restart loses them, and two isolates do not

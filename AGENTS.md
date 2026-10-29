@@ -5,7 +5,10 @@ Spreadsheets with formulas that people and agents edit together.
 ## Mental model
 
 A workbook is a Yjs document. It holds ordered sheets. Each sheet holds
-sparse cells keyed by A1 coordinates. A cell holds a value or a formula.
+sparse cells keyed by the ids of their row and column, and an order of those ids.
+An A1 address is a view of that order. A formula stores refs as ids and shows them as A1.
+Code in `src/core/` never reads a cell by A1 text: it asks the sheet for the id at a position.
+A cell holds a value or a formula.
 
 ## Faces
 

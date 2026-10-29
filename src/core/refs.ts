@@ -9,10 +9,6 @@ export interface FoundRef {
   range: RangePos;
 }
 
-// What to write in place of a ref. Null writes #REF!. A sheet of
-// undefined keeps the sheet as written.
-export type RefEdit = (ref: FoundRef) => { range: RangePos; sheet?: string } | null;
-
 const REF =
   /(?:(?:'((?:[^']|'')+)'|([A-Za-z_][\w.]*))!)?(\$?)([A-Za-z]{1,3})(\$?)(\d+)(?::(\$?)([A-Za-z]{1,3})(\$?)(\d+))?(?![\w(])/y;
 
@@ -35,9 +31,9 @@ function skipLiteral(text: string, start: number): number {
   return i + 1;
 }
 
-// Rewrite every ref in a formula. Text inside string literals, and
+// Replace every ref in a formula with the text `edit` returns. Text inside string literals, and
 // words such as LOG10( that only look like refs, stay as they are.
-export function rewriteRefs(formula: string, home: string, edit: RefEdit): string {
+export function mapRefs(formula: string, home: string, edit: (found: { text: string; ref: FoundRef; flags: Flags }) => string): string {
   let out = "";
   let i = 0;
   while (i < formula.length) {
@@ -53,19 +49,13 @@ export function rewriteRefs(formula: string, home: string, edit: RefEdit): strin
       i += 1;
       continue;
     }
-    const { text, ref, flags } = match;
-    const next = edit(ref);
-    if (next === null) out += "#REF!";
-    else {
-      const sheet = next.sheet ?? ref.sheet;
-      out += (sheet === null ? "" : `${quoteSheet(sheet)}!`) + formatSpan(next.range, flags);
-    }
-    i += text.length;
+    out += edit(match);
+    i += match.text.length;
   }
   return out;
 }
 
-interface Flags {
+export interface Flags {
   c1: string;
   r1: string;
   c2: string;
@@ -94,27 +84,8 @@ export function readRef(formula: string, at: number, home: string): { text: stri
   return { text, ref: { sheet, target: sheet ?? home, range }, flags };
 }
 
-function formatSpan(range: RangePos, flags: Flags): string {
+export function formatSpan(range: RangePos, flags: Flags): string {
   const start = `${flags.c1}${colLetters(range.c1)}${flags.r1}${range.r1}`;
   if (!flags.isRange) return start;
   return `${start}:${flags.c2}${colLetters(range.c2)}${flags.r2}${range.r2}`;
-}
-
-// Move the span [a, b] when rows or columns are inserted at `at`, or
-// when `count` rows or columns starting at `at` are deleted. Returns
-// null when a delete removes the whole span.
-export function shiftSpan(
-  a: number,
-  b: number,
-  op: "insert" | "delete",
-  at: number,
-  count: number,
-): [number, number] | null {
-  if (op === "insert") {
-    return [a >= at ? a + count : a, b >= at ? b + count : b];
-  }
-  const end = at + count - 1;
-  if (a >= at && b <= end) return null;
-  const move = (p: number, edge: number): number => (p < at ? p : p <= end ? edge : p - count);
-  return [move(a, at), move(b, at - 1)];
 }
