@@ -3,6 +3,7 @@ import * as Y from "yjs";
 import { Engine } from "./engine.js";
 import { Workbook, type Principal } from "./workbook.js";
 import { column, fork, grid, race, snapshot } from "../testing/replicas.js";
+import { layoutBuilds } from "./order.js";
 
 // Failure modes, listed before the code.
 // - a move drops a cell, a format, or an author, or leaves a copy of the row where it was
@@ -22,6 +23,9 @@ import { column, fork, grid, race, snapshot } from "../testing/replicas.js";
 // - two inserts at once push a cell past the last row, and then reads and exports throw
 // - a write to one cell rebuilds the order of the whole sheet
 // - a change to the order that arrives from another copy does not tell a listener
+// - a range, or a frozen line, set after a row has moved reads back as #REF! or as another span
+// - edits grouped in one outer transaction read an order from before the group
+// - a write to one cell builds the order again
 
 const human: Principal = { id: "u1", kind: "human" };
 const agent: Principal = { id: "a1", kind: "agent_of_human" };
@@ -132,6 +136,65 @@ describe("ranges and frozen rows when a row moves", () => {
   });
 });
 
+describe("a range or a frozen line set after a row has moved", () => {
+  test("a range over a row that moved reads back as typed", () => {
+    const wb = book();
+    wb.moveRows("Sheet1", 5, 1, 1);
+    wb.writeRange("Sheet1", "C1", [["=SUM(A1:A3)", "=A1", "=SUM(A2:A5)"]], human);
+    expect(grid(wb, "C1:E1")).toEqual([["=SUM(A1:A3)", "=A1", "=SUM(A2:A5)"]]);
+    expect(new Engine(wb).values("Sheet1", "C1:E1")).toEqual([[8, 5, 10]]);
+  });
+
+  test("a range over a row that moved down reads back as typed, and follows later moves", () => {
+    const wb = book();
+    wb.moveRows("Sheet1", 1, 1, 6);
+    wb.writeRange("Sheet1", "C1", [["=SUM(A1:A5)", "=SUM(A3:A5)"]], human);
+    expect(grid(wb, "C1:D1")).toEqual([["=SUM(A1:A5)", "=SUM(A3:A5)"]]);
+    wb.moveRows("Sheet1", 5, 1, 1);
+    expect(grid(wb, "C2:D2")).toEqual([["=SUM(A2:A5)", "=SUM(A4:A5)"]]);
+  });
+
+  test("a frozen line set after a move is the one shown", () => {
+    const wb = new Workbook();
+    wb.addSheet("Sheet1");
+    wb.moveRows("Sheet1", 10, 1, 1);
+    wb.setFrozenRows("Sheet1", 1);
+    expect(wb.sheetInfo("Sheet1").frozenRows).toBe(1);
+    wb.moveRows("Sheet1", 1, 1, 11);
+    wb.setFrozenRows("Sheet1", 10);
+    expect(wb.sheetInfo("Sheet1").frozenRows).toBe(10);
+  });
+});
+
+describe("edits grouped in one transaction", () => {
+  test("a write after an insert in the same transaction lands on the new row", () => {
+    const wb = new Workbook();
+    wb.addSheet("Sheet1");
+    wb.writeRange("Sheet1", "A1", [["old"]], human);
+    wb.doc.transact(() => {
+      wb.insertRows("Sheet1", 1, 1);
+      wb.writeRange("Sheet1", "A1", [["new"]], human);
+      wb.deleteRows("Sheet1", 3, 1);
+      wb.moveRows("Sheet1", 2, 1, 1);
+    });
+    expect(column(wb, "A", 3)).toEqual(["old", "new", null]);
+  });
+});
+
+describe("the order is built once, not on each write", () => {
+  test("20 writes to cells build no order", () => {
+    const wb = book();
+    wb.insertRows("Sheet1", 1, 3);
+    wb.readRange("Sheet1", "A1:A1");
+    const before = layoutBuilds();
+    for (let i = 0; i < 20; i += 1) {
+      wb.writeRange("Sheet1", "B9", [[i]], human);
+      wb.readRange("Sheet1", "B9:B9");
+    }
+    expect(layoutBuilds()).toBe(before);
+  });
+});
+
 describe("move columns", () => {
   test("cells, formulas, and widths follow", () => {
     const wb = new Workbook();
@@ -220,19 +283,6 @@ describe("two inserts at once at the edge of the grid", () => {
     a.deleteRows("Sheet1", 1, 10);
     expect(grid(a, "A1048570:A1048570")).toEqual([["far"]]);
     expect(a.cellCount("Sheet1")).toBe(6);
-  });
-});
-
-describe("a big order", () => {
-  test("a write to one cell does not rebuild it", { timeout: 120_000 }, () => {
-    const wb = book();
-    for (let i = 0; i < 15; i += 1) wb.insertRows("Sheet1", 1, 10_000);
-    const started = Date.now();
-    for (let i = 0; i < 20; i += 1) {
-      wb.writeRange("Sheet1", "B150010", [[i]], human);
-      expect(grid(wb, "B150010:B150010")).toEqual([[i]]);
-    }
-    expect(Date.now() - started).toBeLessThan(1_000);
   });
 });
 

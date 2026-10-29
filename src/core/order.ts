@@ -45,6 +45,11 @@ export interface Place {
   visible: boolean;
 }
 
+let built = 0;
+
+// How many layouts this process has built. Tests read it to show that a write builds none.
+export const layoutBuilds = (): number => built;
+
 export class Layout {
   private readonly items: Item[] = [];
   // For each item: the visible rows before it, and through it.
@@ -57,6 +62,7 @@ export class Layout {
   private readonly runs: number[] = [];
 
   constructor(order: readonly unknown[], gone: ReadonlySet<string>) {
+    built += 1;
     // An entry key is used once, and is never a base id or the root. A repeat or a clash would
     // list the same children twice, and an entry that names itself would never end.
     const keys = new Set<string>();

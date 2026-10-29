@@ -14,6 +14,8 @@ import { column, exchange, fork, grid, race, snapshot } from "../testing/replica
 // - a migrated workbook still loses a write that races an insert
 // - migrating a second time changes the workbook
 // - two copies that each convert, and then edit before they merge, lose a value, an insert, or a write
+// - two copies that convert different old states keep only their own cells after they merge
+// - a key already in the new form, in a sheet that still lacks an id, is dropped by the conversion
 
 const stampOf = (id: string, kind: string) => ({ id, kind, at: "2026-01-02T03:04:05.000Z" });
 
@@ -112,6 +114,28 @@ describe("a workbook saved with A1 keys", () => {
     await race(a, b, (w) => (w.insertRows("Sheet1", 1, 1), w.writeRange("Sheet1", "A1", [["new"]], { id: "u2", kind: "human" })), (w) => w.writeRange("Sheet1", "A2", [[99]], { id: "u3", kind: "human" }));
     expect(snapshot(a)).toEqual(snapshot(b));
     expect(column(a, "A", 4)).toEqual(["new", 555, 99, "text"]);
+  });
+
+  test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("copies that convert different old states still merge (client ids %j)", (ids) => {
+    const older = legacyState();
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, older);
+    ((doc.getArray("sheets").get(0) as Y.Map<unknown>).get("cells") as Y.Map<unknown>).set("E9:c", 7);
+    const newer = Y.encodeStateAsUpdate(doc);
+    const [a, b] = [fork(older, ids[0]), fork(newer, ids[1])];
+    exchange(a, b);
+    expect(snapshot(a)).toEqual(snapshot(b));
+    expect(grid(a, "E9:E9")).toEqual([[7]]);
+    expect(grid(a, "A1:A2")).toEqual([[10], [20]]);
+    expect(a.cellCount("Sheet1")).toBe(8);
+  });
+
+  test("a key already in the new form is kept", () => {
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, legacyState());
+    ((doc.getArray("sheets").get(0) as Y.Map<unknown>).get("cells") as Y.Map<unknown>).set("3|4:c", "kept");
+    const wb = Workbook.fromState(Y.encodeStateAsUpdate(doc));
+    expect(grid(wb, "D3:D3")).toEqual([["kept"]]);
   });
 
   test("a write that races an insert follows its row", async () => {
