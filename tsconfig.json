@@ -10,7 +10,16 @@
     "resolveJsonModule": true,
     "isolatedModules": true,
     "noEmit": true,
-    "types": ["node"]
+    "types": [
+      "node"
+    ]
   },
-  "include": ["src", "tsup.config.ts", "vitest.config.ts"]
+  "include": [
+    "src",
+    "e2e",
+    "tsup.config.ts",
+    "vitest.config.ts",
+    "playwright.config.ts",
+    "vite.config.ts"
+  ]
 }

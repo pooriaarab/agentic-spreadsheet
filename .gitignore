@@ -6,3 +6,6 @@ coverage/
 .env.local
 .DS_Store
 .wrangler/
+test-results/
+playwright-report/
+.dev.vars

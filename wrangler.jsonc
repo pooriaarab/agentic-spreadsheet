@@ -1,10 +1,15 @@
 {
   "name": "agentic-spreadsheet",
-  "main": "src/worker.ts",
+  "main": "src/ui-worker.ts",
   "compatibility_date": "2026-01-01",
   // The root of agentic-identity imports node:module for its version string.
   "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "PACK_NAME": "agentic-spreadsheet"
-  }
+  },
+  // The web UI. Run `npm run build` first. The Worker answers /api and /health, and serves the rest from here.
+  "assets": { "directory": "./dist/ui", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*", "/health"] },
+  // One room per workbook carries presence.
+  "durable_objects": { "bindings": [{ "name": "SYNC_ROOM", "class_name": "SyncRoom" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SyncRoom"] }]
 }
