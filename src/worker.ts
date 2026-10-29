@@ -1,7 +1,7 @@
 import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { createAccess, NoLink, NoShare, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
+import { createAccess, NoLink, NoShare, NotOwner, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
 import { EraseRefusedError, hasScope, parseRegion, type Auth, type Blobs, type PrincipalContext, type Role, type Region, type Store } from "agentic-identity";
@@ -166,7 +166,10 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
     if (denied !== null) return denied;
     const query = page.safeParse(c.req.query());
     if (!query.success) return c.json({ error: message(query.error) }, 400);
-    return c.json(await access.links(c.get("who"), c.req.param("book"), query.data));
+    return c.json(await access.links(c.get("who"), c.req.param("book"), query.data).catch((error: unknown) => {
+      if (error instanceof NotOwner) throw new OpError(error.message, 403);
+      throw error;
+    }));
   });
   api.post("/:book/links", async (c) => {
     const denied = await guard(c, "admin", c.req.param("book"));

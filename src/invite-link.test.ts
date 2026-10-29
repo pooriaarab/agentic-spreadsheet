@@ -1,5 +1,6 @@
 import { createMemoryBlobs, createMemoryStore } from "agentic-identity";
 import { describe, expect, test } from "vitest";
+import { resourceId } from "./access.js";
 import { trustHeaders } from "./auth.js";
 import { createApp } from "./worker.js";
 
@@ -10,7 +11,7 @@ import { createApp } from "./worker.js";
 // - an owner of two books revokes the link of one through the other
 // - a revoked link is not marked, or a missing link looks like a success
 
-const app = () => createApp({ store: createMemoryStore(), blobs: createMemoryBlobs(), authenticate: trustHeaders });
+const app = (store = createMemoryStore()) => createApp({ store, blobs: createMemoryBlobs(), authenticate: trustHeaders });
 async function call(a: ReturnType<typeof app>, who: string, method: string, path: string, body?: unknown) {
   const res = await a.request(`/api/v1/sheets${path}`, {
     method,
@@ -68,5 +69,24 @@ describe("invites and share links", () => {
     expect((await call(a, "ana", "DELETE", `/one/links/${link.json.id}`)).status).toBe(404);
     expect((await call(a, "ana", "DELETE", "/one/links/missing")).status).toBe(404);
     expect((await call(a, "ana", "GET", "/two/links")).json.links[0].revokedAt).toBeUndefined();
+  });
+
+  test("a stored link with a role of owner is not listed", async () => {
+    const store = createMemoryStore();
+    const a = app(store);
+    await call(a, "ana", "POST", "", { book: "b" });
+    await store.put("links", "damaged", { id: "damaged", resourceId: await resourceId("b"), role: "owner", tokenHash: "x", signedInOnly: false });
+    expect((await call(a, "ana", "GET", "/b/links")).json.links).toEqual([]);
+  });
+
+  test("revoking twice keeps the first revoke time", async () => {
+    const a = app();
+    await call(a, "ana", "POST", "", { book: "b" });
+    const link = await call(a, "ana", "POST", "/b/links", { role: "viewer" });
+    await call(a, "ana", "DELETE", `/b/links/${link.json.id}`);
+    const first = (await call(a, "ana", "GET", "/b/links")).json.links[0].revokedAt;
+    await new Promise((r) => setTimeout(r, 5));
+    expect((await call(a, "ana", "DELETE", `/b/links/${link.json.id}`)).status).toBe(200);
+    expect((await call(a, "ana", "GET", "/b/links")).json.links[0].revokedAt).toBe(first);
   });
 });

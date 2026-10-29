@@ -170,7 +170,7 @@ Every sharing call needs the owner role:
 
 An invite or a link gives `viewer`, `commenter`, or `editor`, never `owner`. An invite names an email (a person) or a
 handle (an agent). `--expires-in-ms` sets how long an invite or link lives. A link token shows once, in the reply that
-makes it. A list shows the id, role, expiry, and revoke time, never the email or the token. Accepting an invite and
+makes it. A list never shows the email, the token, or the token hash. Accepting an invite and
 opening a link are part of `agentic-identity`: this package does not serve them yet.
 A write needs `--as <id>` and `--kind <kind>` (or `SHEET_AS` and `SHEET_KIND`). There is no default
 kind. An agent sets `agent`, `agent_of_human`, or `agent_of_agent`. A read needs neither.

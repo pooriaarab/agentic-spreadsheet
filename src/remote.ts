@@ -33,7 +33,8 @@ const cursor = z.string().optional().describe("The nextCursor of the last page."
 const subject = z.string().min(1).describe("The id of the person or agent.");
 const subjectKind = z.enum(SUBJECT_KIND_NAMES).describe("A person (human) and an agent with one id hold separate roles.");
 
-const lifetime = z.coerce.number().int().positive().optional().describe("How long it lives, in milliseconds.");
+// The CLI gives text, and a flag with no value gives `true`: only a number or digits pass.
+const lifetime = z.union([z.number(), z.string().regex(/^\d{1,15}$/).transform(Number)]).pipe(z.number().int().positive()).optional().describe("How long it lives, in milliseconds.");
 // The CLI gives "true" or "false" as text, and MCP gives a boolean.
 const flag = z.union([z.boolean(), z.enum(["true", "false"]).transform((v) => v === "true")]).optional().describe("Only signed-in people may use it.");
 

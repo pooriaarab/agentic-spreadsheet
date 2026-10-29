@@ -22,7 +22,7 @@ export interface Ctx {
 export class OpError extends Error {
   constructor(
     message: string,
-    readonly status: 404 | 409 | 413,
+    readonly status: 403 | 404 | 409 | 413,
   ) {
     super(message);
   }

@@ -142,6 +142,11 @@ describe("sharing from the CLI", () => {
     expect(links).not.toContain("tokenHash");
     expect(cli(KEY_OWNER, "unlink", "inv", "--link", link.id).out).toBe('{"ok":true}');
     expect(JSON.parse(cli(KEY_OWNER, "links", "inv").out).links[0].revokedAt).toBeTypeOf("number");
+    const revokedAt = JSON.parse(cli(KEY_OWNER, "links", "inv").out).links[0].revokedAt;
+    expect(cli(KEY_OWNER, "unlink", "inv", "--link", link.id).code).toBe(0);
+    expect(JSON.parse(cli(KEY_OWNER, "links", "inv").out).links[0].revokedAt).toBe(revokedAt);
+    expect(cli(KEY_OWNER, "link", "inv", "--role", "viewer", "--expires-in-ms").code).toBe(1);
+    expect(cli(KEY_OWNER, "link", "inv", "--role", "viewer", "--expires-in-ms", "soon").code).toBe(1);
     expect(cli(KEY_OWNER, "unlink", "inv", "--link", "nope").code).toBe(1);
     expect(cli(KEY_OWNER, "invite", "inv", "--role", "owner", "--handle", "helper").code).toBe(1);
     expect(cli(KEY_OWNER, "invite", "inv", "--role", "viewer").code).toBe(1);

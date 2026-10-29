@@ -11,6 +11,12 @@ export class NoShare extends Error {
   }
 }
 
+export class NotOwner extends Error {
+  constructor() {
+    super("only an owner may list the links of a workbook");
+  }
+}
+
 export class NoLink extends Error {
   constructor(link: string) {
     super(`no link "${link}" on this workbook`);
@@ -95,9 +101,11 @@ export function createAccess(store: Store) {
     // The links on a book, one page. The store keeps a token hash only, and a list never shows it. Only an owner may.
     async links(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}): Promise<{ links: LinkSummary[]; nextCursor?: string }> {
       const resource = await resourceId(book);
-      if (!(await sharing.can(await context(who), "admin", resource)).allowed) throw new Error("forbidden");
+      if (!(await sharing.can(await context(who), "admin", resource)).allowed) throw new NotOwner();
       const page = await store.query("links", { where: { resourceId: resource }, limit: paging.limit ?? 100, ...(paging.cursor === undefined ? {} : { cursor: paging.cursor }) });
-      const links = page.items.map(({ data: d }): LinkSummary => ({
+      // A doc with a bad id or a role that is not a share role is not honored, so it is not listed.
+      const valid = page.items.filter(({ data: d }) => typeof d.id === "string" && (SHARE_ROLES as readonly unknown[]).includes(d.role));
+      const links = valid.map(({ data: d }): LinkSummary => ({
         id: String(d.id),
         role: d.role as Role,
         signedInOnly: d.signedInOnly === true,
@@ -115,6 +123,8 @@ export function createAccess(store: Store) {
     async revokeLink(who: Principal, book: string, linkId: string): Promise<void> {
       const resource = await resourceId(book);
       if (!/^[\w-]{1,128}$/.test(linkId) || (await store.get("links", linkId))?.resourceId !== resource) throw new NoLink(linkId);
+      // Revoking twice keeps the first revoke time.
+      if ((await store.get("links", linkId))?.revokedAt != null) return;
       await sharing.revokeLink(await context(who), linkId);
     },
     async unshare(who: Principal, book: string, from: { kind: SubjectKind; id: string }): Promise<void> {
