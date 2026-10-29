@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { colLetters, MAX_ROW, parseRange } from "./core/a1.js";
+import { colLetters, MAX_COL, MAX_ROW, parseRange } from "./core/a1.js";
 import { Engine } from "./core/engine.js";
 import { formatCsv, inferCell, parseCsv } from "./core/csv.js";
 import { fromBase64 } from "./core/bytes.js";
@@ -278,6 +278,57 @@ export const OPS: Op[] = [
       ctx.principal();
       await edit(ctx, a.book, (wb) => wb.insertRows(first(wb, a.sheet), a.at, a.count));
       return { ok: true };
+    },
+  },
+  {
+    name: "delete-rows", description: "Delete rows. A formula that points at a deleted cell reads #REF!.", args: ["book", "at", "count"],
+    shape: { book, at: z.coerce.number().int().min(1).max(MAX_ROW).describe("First row number to delete."), count: z.coerce.number().int().min(1).max(MAX_STRUCTURE_COUNT).default(1), sheet },
+    async run(a: { book: string; at: number; count: number; sheet?: string }, ctx) {
+      ctx.principal();
+      await edit(ctx, a.book, (wb) => wb.deleteRows(first(wb, a.sheet), a.at, a.count));
+      return { ok: true };
+    },
+  },
+  {
+    name: "insert-cols", description: "Insert columns. Formulas follow the moved cells.", args: ["book", "at", "count"],
+    shape: { book, at: z.coerce.number().int().min(1).max(MAX_COL).describe("Column number to insert before. A is 1."), count: z.coerce.number().int().min(1).max(MAX_STRUCTURE_COUNT).default(1), sheet },
+    async run(a: { book: string; at: number; count: number; sheet?: string }, ctx) {
+      ctx.principal();
+      await edit(ctx, a.book, (wb) => wb.insertCols(first(wb, a.sheet), a.at, a.count));
+      return { ok: true };
+    },
+  },
+  {
+    name: "delete-cols", description: "Delete columns. A formula that points at a deleted cell reads #REF!.", args: ["book", "at", "count"],
+    shape: { book, at: z.coerce.number().int().min(1).max(MAX_COL).describe("First column number to delete. A is 1."), count: z.coerce.number().int().min(1).max(MAX_STRUCTURE_COUNT).default(1), sheet },
+    async run(a: { book: string; at: number; count: number; sheet?: string }, ctx) {
+      ctx.principal();
+      await edit(ctx, a.book, (wb) => wb.deleteCols(first(wb, a.sheet), a.at, a.count));
+      return { ok: true };
+    },
+  },
+  {
+    name: "sheets", description: "List the sheets of a workbook, each with its used range.", args: ["book"], readOnly: true,
+    shape: { book },
+    async run(a: { book: string }, ctx) {
+      const wb = await view(ctx, a.book);
+      return { sheets: wb.sheetNames().map((name) => ({ name, extent: wb.extent(name) })) };
+    },
+  },
+  {
+    name: "add-sheet", description: "Add an empty sheet at the end.", args: ["book", "name"],
+    shape: { book, name: z.string().min(1).describe("Name of the new sheet.") },
+    async run(a: { book: string; name: string }, ctx) {
+      ctx.principal();
+      return edit(ctx, a.book, (wb) => (wb.addSheet(a.name), { ok: true, sheets: wb.sheetNames() }));
+    },
+  },
+  {
+    name: "delete-sheet", description: "Delete a sheet. A formula that points at it reads #REF!. The last sheet stays.", args: ["book", "name"],
+    shape: { book, name: z.string().min(1).describe("Name of the sheet to delete.") },
+    async run(a: { book: string; name: string }, ctx) {
+      ctx.principal();
+      return edit(ctx, a.book, (wb) => (wb.deleteSheet(a.name), { ok: true, sheets: wb.sheetNames() }));
     },
   },
   {

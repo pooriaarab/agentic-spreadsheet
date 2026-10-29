@@ -190,7 +190,7 @@ describe("mcp over stdio", () => {
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [CLI, "mcp"], env: { SHEET_DIR: dir, SHEET_AS: "bot", SHEET_KIND: "agent" } }));
     try {
       const names = (await client.listTools()).tools.map((t) => t.name).sort();
-      expect(names).toEqual(["export", "formula", "import", "insert_rows", "list", "new", "read", "write"].map((n) => `sheet_${n}`));
+      expect(names).toEqual(["add_sheet", "delete_cols", "delete_rows", "delete_sheet", "export", "formula", "import", "insert_cols", "insert_rows", "list", "new", "read", "sheets", "write"].map((n) => `sheet_${n}`));
       const call = async (name: string, args: Record<string, unknown>) => {
         const r = (await client.callTool({ name, arguments: args })) as { isError?: boolean; content: { text: string }[] };
         const { text } = r.content[0];

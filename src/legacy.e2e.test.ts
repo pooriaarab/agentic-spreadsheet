@@ -73,7 +73,7 @@ describe("a stored old workbook", () => {
   });
 
   // Every command marked read-only runs here. A new read command with no row fails the first check.
-  const READS: Record<string, string[]> = { list: ["list"], read: ["read", "old", "A1:B3"], export: ["export", "old"] };
+  const READS: Record<string, string[]> = { list: ["list"], read: ["read", "old", "A1:B3"], sheets: ["sheets", "old"], export: ["export", "old"] };
   test("every read command saves nothing", async () => {
     expect(Object.keys(READS).sort()).toEqual(OPS.filter((op) => op.readOnly).map((op) => op.name).sort());
     putFile("old", legacyState());

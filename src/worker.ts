@@ -25,6 +25,12 @@ const ROUTES = [
   ["put", "/:book/range", "write"],
   ["put", "/:book/formula", "formula"],
   ["post", "/:book/rows", "insert-rows"],
+  ["delete", "/:book/rows", "delete-rows"],
+  ["post", "/:book/cols", "insert-cols"],
+  ["delete", "/:book/cols", "delete-cols"],
+  ["get", "/:book/sheets", "sheets"],
+  ["post", "/:book/sheets", "add-sheet"],
+  ["delete", "/:book/sheets/:name", "delete-sheet"],
   ["get", "/:book/export", "export"],
   ["post", "/:book/import", "import"],
 ] as const;
@@ -68,7 +74,8 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
       const denied = book === undefined ? null : await guard(c.get("who"), op.readOnly ? "read" : "write", book);
       if (denied !== null) return denied;
       let body: unknown = {};
-      if (method !== "get") {
+      // A read and a delete carry their input in the path and the query string.
+      if (method !== "get" && method !== "delete") {
         body = await c.req.json().catch(() => null);
         if (typeof body !== "object" || body === null || Array.isArray(body)) return c.json({ error: "the body must be a JSON object" }, 400);
       }
