@@ -14,12 +14,10 @@ import { column, exchange, fork, grid, race, snapshot } from "../testing/replica
 // - a migrated workbook still loses a write that races an insert
 // - migrating a second time changes the workbook
 // - two copies that each convert, and then edit before they merge, lose a value, an insert, or a write
-// - two copies that convert different old states keep only their own cells after they merge
 // - a key already in the new form, in a sheet that still lacks an id, is dropped by the conversion
-// - two copies that convert different old states merge with no sign, then lose rows or edits, or
-//   give two sheets one id so a formula reads the wrong sheet
-// - two copies that convert one state are flagged as a clash because they keep deleted items
-//   differently, and then no copy can be written again
+// - two copies that each convert an old workbook merge with no sign, though each made its own order
+//   for the sheets and the merge keeps one, so rows and edits are lost and two sheets can share an id
+// - a workbook that was converted once, saved, and then shared is flagged as a clash
 // - after a clash a read shows rows in the wrong place, as if the data were good
 
 const stampOf = (id: string, kind: string) => ({ id, kind, at: "2026-01-02T03:04:05.000Z" });
@@ -99,26 +97,27 @@ describe("a workbook saved with A1 keys", () => {
     expect(twice.doc.getArray("sheets").toJSON()).toEqual(once.doc.getArray("sheets").toJSON());
   });
 
-  test("two copies that both migrate merge into the same workbook", () => {
-    const state = legacyState();
-    const a = fork(state, 1);
-    const b = fork(state, 2);
-    const before = a.doc.getArray("sheets").toJSON();
-    exchange(a, b);
-    expect(a.doc.getArray("sheets").toJSON()).toEqual(before);
-    expect(b.doc.getArray("sheets").toJSON()).toEqual(before);
-    expect(snapshot(a)).toEqual(snapshot(b));
-  });
-
-  test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("copies that each convert and then edit keep every edit (client ids %j)", async (ids) => {
-    const state = legacyState();
-    const [a, b] = [fork(state, ids[0]), fork(state, ids[1])];
+  test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("a workbook converted once and then shared keeps every edit (client ids %j)", async (ids) => {
+    const converted = Workbook.fromState(legacyState()).encode();
+    const [a, b] = [fork(converted, ids[0]), fork(converted, ids[1])];
     a.writeRange("Sheet1", "A1", [[555]], { id: "u2", kind: "human" });
     exchange(a, b);
     expect(column(b, "A", 1)).toEqual([555]);
     await race(a, b, (w) => (w.insertRows("Sheet1", 1, 1), w.writeRange("Sheet1", "A1", [["new"]], { id: "u2", kind: "human" })), (w) => w.writeRange("Sheet1", "A2", [[99]], { id: "u3", kind: "human" }));
     expect(snapshot(a)).toEqual(snapshot(b));
     expect(column(a, "A", 4)).toEqual(["new", 555, 99, "text"]);
+    expect([a.conversionClash(), b.conversionClash()]).toEqual([false, false]);
+  });
+
+  test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("copies that each convert one old state are flagged when they merge (client ids %j)", (ids) => {
+    const state = legacyState();
+    const [a, b] = [fork(state, ids[0]), fork(state, ids[1])];
+    expect([a.conversionClash(), b.conversionClash()]).toEqual([false, false]);
+    exchange(a, b);
+    for (const w of [a, b]) {
+      expect(w.conversionClash()).toBe(true);
+      expect(() => w.sheetNames()).toThrow(/converted/);
+    }
   });
 
   function twoStates(): [Uint8Array, Uint8Array] {
@@ -138,44 +137,21 @@ describe("a workbook saved with A1 keys", () => {
     return [older, Y.encodeStateAsUpdate(doc)];
   }
 
-  test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("copies that convert different old states are flagged, and every read and write throws (client ids %j)", (ids) => {
+  test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("copies that convert different old states are flagged too, and every read and write throws (client ids %j)", (ids) => {
     const [older, newer] = twoStates();
     const [a, b] = [fork(older, ids[0]), fork(newer, ids[1])];
     expect([a.conversionClash(), b.conversionClash()]).toEqual([false, false]);
     exchange(a, b);
     for (const w of [a, b]) {
       expect(w.conversionClash()).toBe(true);
-      expect(() => grid(w, "E9:E9")).toThrow(/different old states/);
-      expect(() => w.cellCount("Sheet1")).toThrow(/different old states/);
-      expect(() => w.sheetNames()).toThrow(/different old states/);
-      expect(() => w.writeRange("Sheet1", "A1", [[1]], { id: "u1", kind: "human" })).toThrow(/different old states/);
-      expect(() => w.insertRows("Sheet1", 1, 1)).toThrow(/different old states/);
+      expect(() => grid(w, "E9:E9")).toThrow(/converted/);
+      expect(() => w.cellCount("Sheet1")).toThrow(/converted/);
+      expect(() => w.sheetNames()).toThrow(/converted/);
+      expect(() => w.writeRange("Sheet1", "A1", [[1]], { id: "u1", kind: "human" })).toThrow(/converted/);
+      expect(() => w.insertRows("Sheet1", 1, 1)).toThrow(/converted/);
       const ids = (w.doc.getArray("sheets").toJSON() as { id: string; name: string }[]).map((sheet) => sheet.id);
       expect(new Set(ids).size).toBe(ids.length);
     }
-  });
-
-  test("copies that keep deleted items differently are not flagged", () => {
-    const doc = new Y.Doc({ gc: false });
-    Y.applyUpdate(doc, legacyState());
-    const cells = (doc.getArray("sheets").get(0) as Y.Map<unknown>).get("cells") as Y.Map<unknown>;
-    cells.set("A1:c", 11);
-    cells.set("A1:c", 12);
-    const state = Y.encodeStateAsUpdate(doc);
-    const [a, b] = [fork(state, 1, false), fork(state, 2, true)];
-    exchange(a, b);
-    expect([a.conversionClash(), b.conversionClash()]).toEqual([false, false]);
-    a.writeRange("Sheet1", "A1", [[1]], { id: "u1", kind: "human" });
-    exchange(a, b);
-    expect(column(b, "A", 1)).toEqual([1]);
-  });
-
-  test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("copies that convert one state are not flagged (client ids %j)", (ids) => {
-    const state = legacyState();
-    const [a, b] = [fork(state, ids[0]), fork(state, ids[1])];
-    exchange(a, b);
-    expect([a.conversionClash(), b.conversionClash()]).toEqual([false, false]);
-    a.writeRange("Sheet1", "A1", [[1]], { id: "u1", kind: "human" });
   });
 
   test("a key already in the new form is kept", () => {
