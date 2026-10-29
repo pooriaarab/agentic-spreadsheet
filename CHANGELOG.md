@@ -13,10 +13,11 @@ All notable changes to this project are listed here. The format follows
 - The CLI file store has a new layout. A workbook was one file per workbook. Now the store keeps
   `store.json` and a `blobs/` folder. A 0.1.0 workbook is read as it is and moves into `store.json`
   on the first write.
-- The Worker refuses a workbook that has no owner, for every principal. A workbook stored before
-  sharing has no owner. A principal with no role gets 404. A principal with a role that is too low gets 403.
+- The Worker checks a role on every workbook route. In 0.1.0 any valid key could use any workbook.
+  Now a key with no share gets 404, even for a workbook another key made. A role that is too low gets 403.
+  Only the owner shares. A workbook stored before sharing has no owner, and the Worker refuses it for every principal.
 - `list` sorts ids by code unit, and a cursor is opaque. Pass back the `cursor` that `list` returned.
-- A new workbook id may not start or end with two underscores, and may not pass 256 characters.
+- A new workbook id may not start and end with two underscores, and may not pass 256 characters.
 - A writer that meets other writers gives up after 50 tries with 409 "Try again".
 - Removed exports: `MemoryStore`, `FileStore`, `queryDocs`, `SAFE_NAME`, and the types `Doc`,
   `QueryOptions`, and `QueryResult`. Use `createMemoryStore`, `createFileStore`, and the `Store` type.
