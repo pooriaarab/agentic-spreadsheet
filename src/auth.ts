@@ -94,7 +94,6 @@ function seedsOf(keys: Record<string, KeyEntry>): Seed[] {
     }
     return { key, principal: { id: who.id, kind: who.kind, scopes: scopes as string[], ...(entry.parent === undefined ? {} : { parentId: entry.parent as string }) } };
   });
-  if (seeds.length === 0) throw new ConfigError("SHEETS_API_KEYS holds no keys");
   // A chain that loops, or runs deeper than agentic-identity allows, could never sign in. Refuse it now.
   const parents = new Map(seeds.map(({ principal: p }) => [p.id, p.parentId]));
   for (const id of parents.keys()) {
