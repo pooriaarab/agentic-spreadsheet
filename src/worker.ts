@@ -105,8 +105,12 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   api.delete("/:book", async (c) => {
     const denied = await guard(c.get("who"), "admin", c.req.param("book"));
     if (denied !== null) return denied;
+    // The book goes first, while the owner's grant still stands, so a failed delete can run again. A
+    // call that finds the book gone still erases the grants, so a repeat finishes the job.
+    await removeWorkbook({ store, blobs, principal: () => c.get("who") }, c.req.param("book")).catch((error: unknown) => {
+      if (!(error instanceof OpError && error.status === 404)) throw error;
+    });
     await access.erase(c.get("who"), c.req.param("book"));
-    await removeWorkbook({ store, blobs, principal: () => c.get("who") }, c.req.param("book"));
     return c.json({ ok: true });
   });
   app.route("/api/v1/sheets", api);

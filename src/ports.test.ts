@@ -134,12 +134,36 @@ describe("workbooks on shared ports", () => {
     const ctx = ctxOf(store, blobs);
     await run("new", { book: "gone" }, ctx);
     const blob = (await store.get("workbooks", "gone"))!.blob as string;
-    await expect(removeWorkbook(ctx, "gone")).rejects.toThrow("blob store down");
+    await expect(removeWorkbook(ctx, "gone")).rejects.toThrow(/could not delete the stored state/);
     expect(await store.get("workbooks", "gone")).not.toBeNull();
     fail = false;
     await removeWorkbook(ctx, "gone");
     expect(await store.get("workbooks", "gone")).toBeNull();
     expect(await real.get(blob)).toBeNull();
     await expect(removeWorkbook(ctx, "gone")).rejects.toMatchObject({ status: 404 });
+  });
+
+  test("removeWorkbook starts again when a save lands before its delete, and removes the new blob", async () => {
+    const [store, real] = [createMemoryStore(), createMemoryBlobs()];
+    const other = ctxOf(store, real);
+    let hook = true;
+    const seen: string[] = [];
+    const blobs: Blobs = {
+      ...real,
+      delete: async (key) => {
+        if (hook) {
+          hook = false;
+          await run("write", { book: "busy", anchor: "A1", values: [[1]] }, other);
+          seen.push((await store.get("workbooks", "busy"))!.blob as string);
+        }
+        return real.delete(key);
+      },
+    };
+    await run("new", { book: "busy" }, ctxOf(store, real));
+    seen.push((await store.get("workbooks", "busy"))!.blob as string);
+    await removeWorkbook(ctxOf(store, blobs), "busy");
+    expect(await store.get("workbooks", "busy")).toBeNull();
+    expect(seen).toHaveLength(2);
+    for (const key of seen) expect(await real.get(key)).toBeNull();
   });
 });

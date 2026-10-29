@@ -148,17 +148,23 @@ function edit<T>(ctx: Ctx, id: string, change: (wb: Workbook) => T): Promise<T> 
 // Delete a workbook and its stored state. A missing workbook is a 404. The blob goes first, and a
 // failed blob delete is thrown with the document still in place, so the same call can run again.
 // A save that lands between the two steps points the document at a new blob, so the call starts again.
+// Between the two steps the document names a blob that is gone, and a read or an edit of that workbook
+// fails. If the document delete then fails, call again.
 export async function removeWorkbook(ctx: Ctx, id: string): Promise<void> {
   for (let attempt = 1; ; attempt += 1) {
     const doc = await ctx.store.get(COLLECTION, id);
     if (doc === null) throw new OpError(`no workbook "${id}"`, 404);
     const key = typeof doc.blob === "string" ? doc.blob : undefined;
-    if (key !== undefined) await ctx.blobs.delete(key);
+    if (key !== undefined) {
+      await ctx.blobs.delete(key).catch((cause: unknown) => {
+        throw new DataError(`could not delete the stored state of workbook "${id}"`, { cause });
+      });
+    }
     try {
       await ctx.store.transaction(async (tx) => {
         const now = await tx.get(COLLECTION, id);
         if (now === null) return;
-        if (now.blob !== doc.blob) throw new Stale(id);
+        if ((typeof now.blob === "string" ? now.blob : undefined) !== key) throw new Stale(id);
         await tx.delete(COLLECTION, id);
       });
       return;

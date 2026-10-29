@@ -114,6 +114,23 @@ describe("workbook access", () => {
     expect((await call(a, "ed", "GET", "/b/range?range=A1")).status).toBe(404);
   });
 
+  test("a failed blob delete answers 500 and leaves the book, and the owner can delete it again", async () => {
+    const [store, real] = [createMemoryStore(), createMemoryBlobs()];
+    let fail = true;
+    const blobs = { ...real, delete: async (key: string) => (fail ? Promise.reject(new Error("blob store down")) : real.delete(key)) };
+    const a = createApp({ store, blobs, authenticate: trustHeaders });
+    await call(a, "ana", "POST", "", { book: "b" });
+    const blob = (await store.get("workbooks", "b"))!.blob as string;
+    const failed = await call(a, "ana", "DELETE", "/b");
+    expect([failed.status, JSON.stringify(failed.json)]).toEqual([500, expect.not.stringContaining("blob store down")]);
+    expect((await call(a, "ana", "GET", "/b/range?range=A1")).status).not.toBe(404);
+    fail = false;
+    expect((await call(a, "ana", "DELETE", "/b")).status).toBe(200);
+    expect((await store.query("workbooks", { limit: 10 })).items).toEqual([]);
+    expect(await real.get(blob)).toBeNull();
+    expect((await store.query("grants", { limit: 10 })).items).toEqual([]);
+  });
+
   test("an agent that creates a book owns it", async () => {
     const a = app();
     expect((await call(a, "bot", "POST", "", { book: "mine" })).status).toBe(201);
