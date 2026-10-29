@@ -118,12 +118,30 @@ export class Workbook {
     this.doc = doc;
     this.sheets = doc.getArray("sheets");
     this.checkKeys();
-    this.sheets.observeDeep((events) => {
-      for (const event of events) this.watchKeys(event);
-      // A write to a cell or a width changes neither the order nor the names, so it keeps both caches.
-      if (events.some(({ path }) => !(path.length === 2 && (path[1] === "cells" || path[1] === "widths")))) this.invalidate();
-    });
-    this.migrate();
+    this.sheets.observeDeep(this.watch);
+    try {
+      this.migrate();
+    } catch (error) {
+      this.dispose(); // a workbook that fails to open leaves nothing on the document
+      throw error;
+    }
+  }
+
+  // True when the document holds a workbook in the old form. Opening it as a Workbook converts it, which writes to it.
+  static needsConversion(doc: Y.Doc): boolean {
+    return doc.getArray<unknown>("sheets").toArray().some((sheet) => sheet instanceof Y.Map && !sheet.has("id"));
+  }
+
+  private readonly watch = (events: Y.YEvent<Y.AbstractType<unknown>>[]) => {
+    for (const event of events) this.watchKeys(event);
+    // A write to a cell or a width changes neither the order nor the names, so it keeps both caches.
+    if (events.some(({ path }) => !(path.length === 2 && (path[1] === "cells" || path[1] === "widths")))) this.invalidate();
+  };
+
+  // Stop watching the document. Call it when you are done with a workbook whose document lives on. Read the workbook
+  // no more after it: its caches no longer follow the document.
+  dispose(): void {
+    this.sheets.unobserveDeep(this.watch);
   }
 
   // True when two copies each converted an old workbook and then merged. Each copy made its own

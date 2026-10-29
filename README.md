@@ -260,7 +260,7 @@ sheet.update({ client, docId: "forecast", principal: { kind: "human", name: "Ada
 sheet.unmount(); // remove the sheet and stop its polling
 ```
 
-- `principal` needs a known `kind` and a `name`. A missing or unknown kind throws a `TypeError`, and so does
+- `principal` needs a known `kind` and a `name`. With `host` it also needs an `id`. A missing or unknown kind throws a `TypeError`, and so does
   a bad `client` or an empty `docId`. The kind is only checked. It does not change what the server allows:
   the server checks every write against the key of the client. The name shows in the presence room.
 - `readOnly` turns off cell edits, the formula bar, and the row, column, and sheet buttons.
@@ -270,6 +270,42 @@ sheet.unmount(); // remove the sheet and stop its polling
 - `onUnauthorized` runs when the server rejects the key.
 - A React app can use the `WorkbookView` component from the same entry instead. Put it inside the
   providers of `agentic-design/react`. The web UI of this repo uses it.
+- `title` sets the text of the `<h1>`. The default is the `docId`.
+
+### Use your own Yjs document
+
+An app that keeps the workbook in its own Yjs room gives it as `host`. The sheet then reads and writes that document
+as a `Workbook` (its `sheets` array, the same shape this package stores) and computes values in the page. It does not
+call a client, poll, or open a presence room. It reads again as soon as the document changes. `client` is not needed,
+and `token` together with `host` throws a `TypeError`.
+
+```ts
+const sheet = mount(element, {
+  docId: "budget",
+  title: "Budget",
+  principal: { kind: "human", name: "Ada", id: "ada" }, // id is required with host: it is stamped on each cell Ada writes
+  host: {
+    doc, // a Y.Doc
+    presence: sync, // optional: a SyncClient of agentic-realtime, or { peers, onPeers, setPresence }
+    status: () => status, // optional: "connecting" | "connected" | "disconnected", shown as Live, Connecting, or Offline
+    onStatus: (listener) => stop, // optional: tell the sheet when the status changes
+  },
+});
+```
+
+- Use the same `yjs` copy as the sheet. A document from another copy is refused with a `TypeError`.
+- Each cell the sheet writes is stamped with the principal's `id` and `kind`. A cell from an agent kind is machine-made
+  and shows the agent mark. The server does not check these writes: your app and its room decide who may write.
+- With `presence`, the sheet shows the peers and their cells, and sends its own cursor with `setPresence`. On
+  `unmount` it clears its cursor. It never closes your room or your document. Keep the same `presence` object between
+  renders: a new one makes the sheet join again, and peers see its cursor blink.
+- While a cell edit is open, the sheet waits to read the document again, so the edit stays on its sheet and its A1
+  address. If a peer renamed or deleted that sheet, the save fails with a message. If a peer inserted a row or a column
+  above or left of it, the save goes to the same address, as it does on the client path.
+- A document that the sheet cannot read as a workbook shows "Could not open the sheet" in place of the grid. A workbook
+  in an old format converts when the sheet opens it. A read-only sheet does not convert it and shows why.
+- A workbook with no sheet shows "This workbook has no sheet yet." Your app adds the first sheet.
+- The sheet opens the document again only when `doc` changes. It reads `onStatus` once each time.
 
 ## UI
 

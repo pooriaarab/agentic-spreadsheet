@@ -1,11 +1,18 @@
 // The spreadsheet for an app that embeds it: `agentic-spreadsheet/ui`. The app gives an element, a client, a workbook id,
-// and the principal who uses the sheet. React and react-dom are peer dependencies. Add `agentic-spreadsheet/ui.css` once.
+// and the principal who uses the sheet. Or it gives its own Yjs document as `host`. React and react-dom are peer
+// dependencies. Add `agentic-spreadsheet/ui.css` once.
+import { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ToastProvider, TooltipProvider } from "agentic-design/react";
 import type { PrincipalKind, SheetsClient } from "../src/client.js";
+import { Engine } from "../src/core/engine.js";
+import { Workbook } from "../src/core/workbook.js";
+import type * as Y from "yjs";
+import { errorText } from "./session.js";
+import { checkHost, workbookCalls, type HostWorkbook, type RoomPresence, type SheetCalls } from "./host.js";
 import { SheetView } from "./SheetView.js";
 
-export type { PrincipalKind, SheetsClient };
+export type { HostWorkbook, PrincipalKind, RoomPresence, SheetCalls, SheetsClient };
 
 const PRINCIPAL_KINDS: readonly PrincipalKind[] = ["human", "agent_of_human", "agent_of_agent", "agent", "user_token"];
 
@@ -14,26 +21,41 @@ export interface EmbedPrincipal {
   /** Checked only. It does not change what the server allows. */
   kind: PrincipalKind;
   name: string;
+  /** The id stamped on each cell this principal writes in a host workbook. Required with `host`. */
+  id?: string;
 }
 
 export interface MountOptions {
-  /** Reads and writes the workbook. A client from `createClient` in `agentic-spreadsheet/client` works. */
-  client: SheetsClient;
+  /** Reads and writes the workbook. A client from `createClient` in `agentic-spreadsheet/client` works. Not needed with `host`. */
+  client?: SheetsClient;
   /** The workbook id. */
   docId: string;
   principal: EmbedPrincipal;
   /** Show the cells and allow no edit. The default is false. */
   readOnly?: boolean;
-  /** The key for the live presence room, on the origin of the page. Without it, the sheet shows no peers. */
+  /** The key for the live presence room, on the origin of the page. Without it, the sheet shows no peers. Not allowed with `host`. */
   token?: string;
+  /**
+   * A Yjs document that the app keeps in its own room. The sheet reads and writes it, and does not call a client, poll,
+   * or open a presence room. The app keeps the document and its room.
+   */
+  host?: HostWorkbook;
+  /** The heading of the sheet. The default is the docId. */
+  title?: string;
   /** Called when the server does not accept the client's key. */
   onUnauthorized?: () => void;
 }
 
 /** A principal must have a known kind and a name. A missing kind is an error, never a default. */
 function checkOptions(options: MountOptions): void {
-  const { client, docId } = options;
-  if (typeof client?.sheets !== "function" || typeof client.read !== "function") throw new TypeError("the sheet needs a client from createClient");
+  const { client, docId, host } = options;
+  if (host !== undefined) {
+    checkHost(host);
+    if (options.token !== undefined) throw new TypeError("the sheet takes a token or a host workbook, not both");
+    if (options.principal?.id === undefined) throw new TypeError("with a host workbook, the principal needs an id to stamp on its cells");
+  } else if (typeof client?.sheets !== "function" || typeof client.read !== "function") {
+    throw new TypeError("the sheet needs a client from createClient, or a host workbook");
+  }
   if (typeof docId !== "string" || docId === "") throw new TypeError("the sheet needs a docId that is a non-empty string");
   checkPrincipal(options.principal);
 }
@@ -42,14 +64,63 @@ function checkPrincipal(principal: EmbedPrincipal): void {
   if (!principal || !PRINCIPAL_KINDS.includes(principal.kind) || typeof principal.name !== "string" || principal.name.trim() === "") {
     throw new TypeError(`the sheet needs a principal with a kind (${PRINCIPAL_KINDS.join(", ")}) and a name`);
   }
+  if (principal.id !== undefined && (typeof principal.id !== "string" || principal.id.trim() === "")) throw new TypeError("a principal id must be a non-empty string");
 }
 
 const noop = () => {};
 
 /** The grid of one workbook, with its tabs, formula bar, and presence. It needs the design providers above it. */
-export function WorkbookView({ client, docId, principal, readOnly = false, token, onUnauthorized = noop }: MountOptions) {
-  checkOptions({ client, docId, principal });
-  return <SheetView client={client} book={docId} token={token} name={principal.name} readOnly={readOnly} onUnauthorized={onUnauthorized} />;
+export function WorkbookView(options: MountOptions) {
+  checkOptions(options);
+  const { client, docId, principal, readOnly = false, token, host, title, onUnauthorized = noop } = options;
+  if (host) return <HostedSheet host={host} docId={docId} principal={principal} readOnly={readOnly} title={title} />;
+  return <SheetView client={client!} book={docId} title={title} token={token} name={principal.name} readOnly={readOnly} onUnauthorized={onUnauthorized} />;
+}
+
+/** The sheet on a workbook the app keeps. The workbook and its engine live while the document does not change. */
+function HostedSheet({ host, docId, principal, readOnly, title }: { host: HostWorkbook; docId: string; principal: EmbedPrincipal; readOnly: boolean; title?: string }) {
+  const [open, setOpen] = useState<{ book: Workbook; engine: Engine } | { failed: unknown; doc: Y.Doc } | null>(null);
+  // Made and disposed in one effect, so a second mount (StrictMode) gets a live pair, and none stays on the host's document.
+  useEffect(() => {
+    let book: Workbook;
+    try {
+      // Opening an old workbook converts it, which writes to the document. A read-only sheet writes nothing.
+      if (readOnly && Workbook.needsConversion(host.doc)) throw new Error("this workbook is in an old format. Open it once with the right to edit, so it converts");
+      book = new Workbook(host.doc); // it throws on a document it cannot read
+    } catch (failed) {
+      setOpen({ failed, doc: host.doc });
+      return;
+    }
+    const engine = new Engine(book);
+    setOpen({ book, engine });
+    return () => {
+      engine.dispose();
+      book.dispose();
+    };
+  }, [host.doc, readOnly]);
+  const { kind, name } = principal;
+  const id = principal.id!; // checkOptions makes sure a host principal has one
+  const ready = open && "book" in open ? open : null;
+  const calls = useMemo(() => ready && workbookCalls(ready.book, ready.engine, { id, kind }), [ready, id, kind]);
+  const doc = host.doc;
+  const changes = useMemo(() => (listener: () => void) => (doc.on("update", listener), () => doc.off("update", listener)), [doc]);
+  // The app may make the host object on each render. The connection is read once each time the document changes.
+  const latest = useRef(host);
+  latest.current = host;
+  const hasStatus = host.status !== undefined;
+  const connection = useMemo(
+    () => (hasStatus ? { status: () => latest.current.status!(), onStatus: (listener: Parameters<NonNullable<HostWorkbook["onStatus"]>>[0]) => latest.current.onStatus?.(listener) ?? noop } : undefined),
+    [doc, hasStatus],
+  );
+  if (open && "failed" in open && open.doc === host.doc) {
+    return (
+      <div role="alert" className="as-sheet as-banner">
+        <p>Could not open the sheet: {errorText(open.failed)}</p>
+      </div>
+    );
+  }
+  if (!calls || ready?.book.doc !== doc) return <p role="status" className="as-muted">Loading sheet…</p>;
+  return <SheetView key={docId} client={calls} book={docId} title={title} changes={changes} presence={host.presence} connection={connection} name={name} readOnly={readOnly} onUnauthorized={noop} />;
 }
 
 export interface MountedSheet {

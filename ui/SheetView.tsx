@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
 import { BotIcon, Button, Dialog, Input, PresenceStack, useToast } from "agentic-design/react";
 import { colLetters } from "../src/core/a1.js";
-import type { CellAuthor, SheetsClient, Value } from "../src/client.js";
+import type { CellAuthor, Value } from "../src/client.js";
 import { address, isError, parseInput, show, sizeFor, type Pos } from "./grid.js";
+import type { RoomPresence, SheetCalls, Status } from "./host.js";
 import { errorText, isUnauthorized } from "./session.js";
-import { usePresence } from "./usePresence.js";
+import { usePresence, type Live } from "./usePresence.js";
 
 interface Data {
   cols: number;
@@ -13,7 +14,7 @@ interface Data {
   formulas: (string | null)[][];
   authors: (CellAuthor | null)[][];
 }
-type View = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; data: Data };
+type View = { status: "loading" } | { status: "empty" } | { status: "error"; message: string } | { status: "ready"; data: Data };
 // Where the text of an edit is typed: in the cell, or in the formula bar.
 interface Draft {
   text: string;
@@ -23,8 +24,16 @@ interface Draft {
 const POLL_MS = 4000;
 
 export interface SheetViewProps {
-  client: SheetsClient;
+  client: SheetCalls;
   book: string;
+  /** The heading. The default is the book. */
+  title?: string;
+  /** Tells the view when the workbook changed, for a workbook in this tab. With it the view reads again at once and does not poll. */
+  changes?: (listener: () => void) => () => void;
+  /** The app's room presence, used in place of a room of the view's own. */
+  presence?: RoomPresence;
+  /** The app's connection state, shown in place of the state of the view's own room. */
+  connection?: { status: () => Status; onStatus?: (listener: (status: Status) => void) => () => void };
   /** The key for the live presence room. Without it the view runs without presence. */
   token?: string;
   /** Name shown to others in the presence room. */
@@ -34,7 +43,18 @@ export interface SheetViewProps {
   onUnauthorized: () => void;
 }
 
-export function SheetView({ client, book, token, name = "Me", readOnly = false, onUnauthorized }: SheetViewProps) {
+/** The connection state that the app gives, or undefined when it gives none. */
+function useConnection(connection: SheetViewProps["connection"]): Live | undefined {
+  const [state, setState] = useState<Live | undefined>(() => connection?.status());
+  useEffect(() => {
+    setState(connection?.status());
+    const off: unknown = connection?.onStatus?.(setState);
+    return typeof off === "function" ? (off as () => void) : undefined;
+  }, [connection]);
+  return state;
+}
+
+export function SheetView({ client, book, title, changes, presence, connection, token, name = "Me", readOnly = false, onUnauthorized }: SheetViewProps) {
   const toast = useToast();
   const [sheets, setSheets] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
@@ -47,7 +67,11 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
   const grid = useRef<HTMLTableElement>(null);
   const refocus = useRef(false);
   const request = useRef(0);
-  const { peers, live } = usePresence(book, token, address(sel), name);
+  const room = usePresence(book, token, address(sel), name, presence);
+  const hostLive = useConnection(connection);
+  const peers = room.peers;
+  const live = hostLive ?? room.live;
+  const showLive = token !== undefined || hostLive !== undefined;
 
   const unauthorized = useRef(onUnauthorized);
   unauthorized.current = onUnauthorized;
@@ -67,6 +91,11 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
       if (!silent) setView({ status: "loading" });
       try {
         const listed = (await client.sheets({ book })).sheets;
+        if (listed.length === 0) {
+          // Only a workbook in this tab can have no sheet. The app adds the first one, and the change reads again.
+          if (id === request.current) setView({ status: "empty" });
+          return;
+        }
         const current = listed.find((s) => s.name === want) ?? listed[0];
         const { cols, rows } = sizeFor(current.extent);
         const read = await client.read({ book, sheet: current.name, range: `A1:${colLetters(cols)}${rows}` });
@@ -92,9 +121,30 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
 
   const editing = draft !== null;
   useEffect(() => {
-    if (editing) return;
+    if (editing || changes) return;
     const timer = setInterval(() => !document.hidden && void load(active, true), POLL_MS);
     return () => clearInterval(timer);
+  }, [editing, load, active, changes]);
+
+  // A workbook in this tab says when it changed. Read it again then. While an edit is open the read waits, as the poll
+  // does, so the sheet and the cell of the edit stay put. A sheet that a peer renamed or deleted then fails the save.
+  const activeRef = useRef(active);
+  activeRef.current = active;
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const stale = useRef(false);
+  useEffect(
+    () =>
+      changes?.(() => {
+        if (editingRef.current) stale.current = true;
+        else void load(activeRef.current, true);
+      }),
+    [changes, load],
+  );
+  useEffect(() => {
+    if (editing || !stale.current) return;
+    stale.current = false;
+    void load(active, true);
   }, [editing, load, active]);
 
   useEffect(() => {
@@ -237,14 +287,15 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
   return (
     <section className="as-sheet" aria-label={`Workbook ${book}`}>
       <div className="as-row as-between">
-        <h1>{book}</h1>
+        <h1>{title ?? book}</h1>
         <div className="as-row">
-          {token !== undefined && <span className="as-muted" role="status">{live === "connected" ? "Live" : live === "connecting" ? "Connecting…" : "Offline"}</span>}
+          {showLive && <span className="as-muted" role="status">{live === "connected" ? "Live" : live === "connecting" ? "Connecting…" : "Offline"}</span>}
           <PresenceStack entries={peers.map((p) => p.entry)} label="Also here" />
         </div>
       </div>
 
       {view.status === "loading" && <p role="status" className="as-muted">Loading sheet…</p>}
+      {view.status === "empty" && <p role="status" className="as-muted">This workbook has no sheet yet.</p>}
       {view.status === "error" && (
         <div role="alert" className="as-banner">
           <p>Could not load the sheet: {view.message}</p>
