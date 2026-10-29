@@ -123,12 +123,30 @@ describe("workbook access", () => {
     const blob = (await store.get("workbooks", "b"))!.blob as string;
     const failed = await call(a, "ana", "DELETE", "/b");
     expect([failed.status, JSON.stringify(failed.json)]).toEqual([500, expect.not.stringContaining("blob store down")]);
-    expect((await call(a, "ana", "GET", "/b/range?range=A1")).status).not.toBe(404);
+    // The book is still there, and so are its grants, so the owner can call again.
+    expect((await store.get("workbooks", "b")) !== null && (await store.query("grants", { limit: 10 })).items.length > 0).toBe(true);
     fail = false;
     expect((await call(a, "ana", "DELETE", "/b")).status).toBe(200);
     expect((await store.query("workbooks", { limit: 10 })).items).toEqual([]);
     expect(await real.get(blob)).toBeNull();
     expect((await store.query("grants", { limit: 10 })).items).toEqual([]);
+  });
+
+  test("a failed erase of the grants leaves the owner able to delete again, and no one can take the name meanwhile", async () => {
+    const real = createMemoryStore();
+    let fail = true;
+    const store = { ...real, delete: async (collection: string, id: string) => (fail && collection === "grants" ? Promise.reject(new Error("store down")) : real.delete(collection, id)) };
+    const a = createApp({ store, blobs: createMemoryBlobs(), authenticate: trustHeaders });
+    await call(a, "ana", "POST", "", { book: "b" });
+    await call(a, "ana", "PUT", "/b/share", { kind: "human", subject: "ed", role: "editor" });
+    expect((await call(a, "ana", "DELETE", "/b")).status).toBeGreaterThanOrEqual(400);
+    expect((await call(a, "eve", "POST", "", { book: "b" })).status).toBe(409);
+    fail = false;
+    expect((await call(a, "ana", "DELETE", "/b")).status).toBe(200);
+    expect((await real.query("workbooks", { limit: 10 })).items).toEqual([]);
+    expect((await real.query("grants", { limit: 10 })).items).toEqual([]);
+    expect((await call(a, "eve", "POST", "", { book: "b" })).status).toBe(201);
+    expect((await call(a, "ed", "GET", "/b/range?range=A1")).status).toBe(404);
   });
 
   test("an agent that creates a book owns it", async () => {

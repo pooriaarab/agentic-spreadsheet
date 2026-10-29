@@ -145,30 +145,35 @@ function edit<T>(ctx: Ctx, id: string, change: (wb: Workbook) => T): Promise<T> 
   });
 }
 
-// Delete a workbook and its stored state. A missing workbook is a 404. The blob goes first, and a
-// failed blob delete is thrown with the document still in place, so the same call can run again.
-// A save that lands between the two steps points the document at a new blob, so the call starts again.
-// Between the two steps the document names a blob that is gone, and a read or an edit of that workbook
-// fails. If the document delete then fails, call again.
-export async function removeWorkbook(ctx: Ctx, id: string): Promise<void> {
+// Delete a workbook and its stored state. A missing workbook is a 404. The steps run in this order:
+// the blob, then `beforeDocument` (the caller erases the grants there), then the document. A failure
+// in a step is thrown with the later steps not run, and the same call can run again: a blob that is
+// gone deletes with no error, and the grants stay until the erase succeeds. A failed blob delete is a
+// DataError, so the caller does not show the backend text. Between the steps the document names a
+// blob that is gone, so a read or an edit of that workbook fails. A save that lands before the
+// document delete points the document at a new blob, so the call starts again.
+export async function removeWorkbook(ctx: Ctx, id: string, beforeDocument: () => Promise<void> = async () => undefined): Promise<void> {
   for (let attempt = 1; ; attempt += 1) {
     const doc = await ctx.store.get(COLLECTION, id);
     if (doc === null) throw new OpError(`no workbook "${id}"`, 404);
-    const key = typeof doc.blob === "string" ? doc.blob : undefined;
+    if (doc.blob !== undefined && typeof doc.blob !== "string") throw new DataError(`the stored state of workbook "${id}" is not a blob key`);
+    const key = doc.blob;
     if (key !== undefined) {
       await ctx.blobs.delete(key).catch((cause: unknown) => {
         throw new DataError(`could not delete the stored state of workbook "${id}"`, { cause });
       });
     }
+    await beforeDocument();
     try {
       await ctx.store.transaction(async (tx) => {
         const now = await tx.get(COLLECTION, id);
         if (now === null) return;
-        if ((typeof now.blob === "string" ? now.blob : undefined) !== key) throw new Stale(id);
+        if (now.blob !== key) throw new Stale(id);
         await tx.delete(COLLECTION, id);
       });
       return;
     } catch (error) {
+      if (error instanceof StoreConflictError) throw new OpError("another writer changed the workbook. Try again", 409);
       if (!(error instanceof Stale) || attempt >= ATTEMPTS) throw error;
     }
   }
