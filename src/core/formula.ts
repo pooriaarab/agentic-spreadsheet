@@ -117,7 +117,7 @@ export function parse(formula: string, home: string): Node {
         return { t: "lit", v: { error: token.v } };
       case "ref": {
         const { ref } = token.ref!;
-        return { t: "ref", sheet: ref.sheet, range: ref.range, isRange: token.v.includes(":") };
+        return { t: "ref", sheet: ref.sheet, range: ref.range, isRange: token.ref!.flags.isRange };
       }
       case "name": {
         const word = token.v.toUpperCase();
