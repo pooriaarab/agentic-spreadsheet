@@ -10,11 +10,11 @@ sparse cells keyed by A1 coordinates. A cell holds a value or a formula.
 ## Faces
 
 - SDK: `import { Workbook } from "agentic-spreadsheet"`.
-- CLI and MCP: planned. Only `--help` and `--version` work today.
+- CLI and MCP: `npx agentic-spreadsheet <command>` and `npx agentic-spreadsheet mcp`. See the README.
 
 ## Rules
 
-- Pass your own principal on every write. Use an agent kind, never `human`.
+- Pass your own principal on every write: `--as` and `--kind` (or `SHEET_AS` and `SHEET_KIND`). Use an agent kind, never `human`. There is no default.
 - A string that starts with `=` is a formula. Pass a number as a number.
 - Read the result after you insert or delete rows or columns. Refs to deleted cells read `#REF!`.
 - Report errors as errors. Never present a failed call as success.

@@ -7,8 +7,11 @@
 
 Spreadsheets with formulas that people and agents edit together.
 
-> Status: early. The workbook model and the formula engine work. It is not on npm yet.
-> The CLI, MCP server, and HTTP API are planned.
+> Status: early. The workbook model, formula engine, CLI, and MCP server work. It is not on npm yet.
+> The HTTP API is planned.
+>
+> Warning: the CLI and the MCP server do not check who calls them. `--as` and `--kind` are claims
+> that label each edit. Do not give either one to a caller you do not trust.
 
 ## Install
 
@@ -27,6 +30,25 @@ wb.addSheet("Sheet1");
 wb.writeRange("Sheet1", "A1", [[1], [2], ["=SUM(A1:A2)"]], me);
 console.log(new Engine(wb).values("Sheet1", "A1:A3")); // [[1], [2], [3]]
 ```
+
+## CLI and MCP server
+
+```sh
+export SHEET_DIR=./.sheets          # where workbooks live. The default is ./.sheets
+export SHEET_AS=ana SHEET_KIND=human   # who writes. A write fails without both
+npx agentic-spreadsheet new budget
+npx agentic-spreadsheet write budget A1 '[[10,20,"=A1+B1"]]'
+npx agentic-spreadsheet read budget A1:C1   # values, formulas, and authors
+npx agentic-spreadsheet mcp                 # MCP server on stdio
+```
+
+The CLI and the MCP server share one list of operations: `new`, `list`, `read`, `write`,
+`formula`, `insert-rows`, `export` (CSV), `import`. MCP tool names start with `sheet_`.
+A write needs `--as <id>` and `--kind <kind>` (or `SHEET_AS` and `SHEET_KIND`). There is no default
+kind. An agent sets `agent`, `agent_of_human`, or `agent_of_agent`. A read needs neither.
+`import` takes `--as-text`: a cell that starts with `=` stays text. Use it for CSV you do not trust.
+`export` and `import` handle sheets of 150,000 rows and more. Export puts a `'` before text that
+starts with `+ - @` or a control character, and import removes it, so a round trip keeps the text.
 
 ## Features
 
@@ -47,6 +69,8 @@ console.log(new Engine(wb).values("Sheet1", "A1:A3")); // [[1], [2], [3]]
   `ROUNDDOWN`, `ABS`, `CONCAT`, `TEXT`, `LEFT`, `RIGHT`, `MID`, `LEN`, `UPPER`, `LOWER`, `TRIM`,
   `DATE`, `TODAY`, `NOW`. Other names come from `@formulajs/formulajs` and are untested here.
   Blank cells in a range are skipped, as in a spreadsheet app. `MUNIT` and `EXPAND` return `#NAME?`.
+- CSV import and export. Export marks text that starts with `= + - @` so it cannot run as a formula.
+- CSV import and export. Export marks text that starts with `= + - @` so it cannot run as a formula.
 - Read a range. Write a range of values or formulas.
 - Every cell keeps the principal that last edited it. The kind is one of
   `human`, `agent_of_human`, `agent_of_agent`, `agent`, or `user_token`.
@@ -63,9 +87,11 @@ console.log(new Engine(wb).values("Sheet1", "A1:A3")); // [[1], [2], [3]]
   and that does not merge. If two clients do it at once, `structureConflict()` turns true after the
   merge and the workbook refuses writes until someone calls `acceptStructureMerge()`.
   A value write that races an insert lands at the old address, and nothing flags it.
-- There is no storage, CLI, MCP server, or HTTP API yet.
 - Two clients that add a sheet with the same name while offline both succeed.
   The merged workbook then holds two sheets with one name.
+- Storage is local JSON files behind a `Store` interface. A write takes a lock file in the store
+  directory, so processes and parallel calls take turns. A lock from a dead process is taken over.
+  XLSX and ODS import and export, and the HTTP API, are not built yet.
 
 ## License
 

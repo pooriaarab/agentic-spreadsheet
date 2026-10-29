@@ -5,7 +5,7 @@ Spreadsheets with formulas that people and agents edit together.
 Keywords: spreadsheet,sheets,formulas,grid,collaboration,agents,mcp,cli,csv,xlsx.
 
 - SDK: import { Workbook } from "agentic-spreadsheet".
-- CLI and MCP: planned.
+- CLI and MCP: run agentic-spreadsheet --help, or agentic-spreadsheet mcp.
 
 ## Docs
 
