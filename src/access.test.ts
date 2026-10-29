@@ -132,7 +132,17 @@ describe("workbook access", () => {
     expect((await store.query("grants", { limit: 10 })).items).toEqual([]);
   });
 
-  test("a failed erase of the grants leaves the owner able to delete again, and no one can take the name meanwhile", async () => {
+  test("a save that lands during a DELETE does not leave a book with no owner", async () => {
+    const [store, real] = [createMemoryStore(), createMemoryBlobs()];
+    let hook = true;
+    const a = createApp({ store, blobs: { ...real, delete: async (key: string) => { if (hook) { hook = false; await call(a, "ana", "PUT", "/b/range", { anchor: "A1", values: [[1]] }); } return real.delete(key); } }, authenticate: trustHeaders });
+    await call(a, "ana", "POST", "", { book: "b" });
+    expect((await call(a, "ana", "DELETE", "/b")).status).toBe(200);
+    expect((await store.query("workbooks", { limit: 10 })).items).toEqual([]);
+    expect((await store.query("grants", { limit: 10 })).items).toEqual([]);
+  });
+
+  test("guard: a failed erase of the grants leaves the owner able to delete again, and no one can take the name meanwhile", async () => {
     const real = createMemoryStore();
     let fail = true;
     const store = { ...real, delete: async (collection: string, id: string) => (fail && collection === "grants" ? Promise.reject(new Error("store down")) : real.delete(collection, id)) };

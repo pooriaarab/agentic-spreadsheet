@@ -143,6 +143,28 @@ describe("workbooks on shared ports", () => {
     await expect(removeWorkbook(ctx, "gone")).rejects.toMatchObject({ status: 404 });
   });
 
+  test("removeWorkbook runs its before step once when it starts again, and a malformed blob field is a data error", async () => {
+    const [store, real] = [createMemoryStore(), createMemoryBlobs()];
+    const other = ctxOf(store, real);
+    let hook = true;
+    const blobs: Blobs = {
+      ...real,
+      delete: async (key) => {
+        if (hook) {
+          hook = false;
+          await run("write", { book: "twice", anchor: "A1", values: [[1]] }, other);
+        }
+        return real.delete(key);
+      },
+    };
+    await run("new", { book: "twice" }, ctxOf(store, real));
+    let calls = 0;
+    await removeWorkbook(ctxOf(store, blobs), "twice", async () => void (calls += 1));
+    expect(calls).toBe(1);
+    await store.put("workbooks", "odd", { name: "odd", blob: 5 });
+    await expect(removeWorkbook(other, "odd")).rejects.toThrow(/not a blob key/);
+  });
+
   test("removeWorkbook starts again when a save lands before its delete, and removes the new blob", async () => {
     const [store, real] = [createMemoryStore(), createMemoryBlobs()];
     const other = ctxOf(store, real);

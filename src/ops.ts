@@ -147,12 +147,15 @@ function edit<T>(ctx: Ctx, id: string, change: (wb: Workbook) => T): Promise<T> 
 
 // Delete a workbook and its stored state. A missing workbook is a 404. The steps run in this order:
 // the blob, then `beforeDocument` (the caller erases the grants there), then the document. A failure
-// in a step is thrown with the later steps not run, and the same call can run again: a blob that is
-// gone deletes with no error, and the grants stay until the erase succeeds. A failed blob delete is a
+// in the first two steps is thrown with the later steps not run, and the same call can run again: a
+// blob that is gone deletes with no error, and the grants stay until the erase succeeds. A conflict or
+// a save in the last step makes the call start again, and `beforeDocument` does not run twice. A store
+// error in the last step, after the erase, leaves a document with no grants. A failed blob delete is a
 // DataError, so the caller does not show the backend text. Between the steps the document names a
 // blob that is gone, so a read or an edit of that workbook fails. A save that lands before the
 // document delete points the document at a new blob, so the call starts again.
 export async function removeWorkbook(ctx: Ctx, id: string, beforeDocument: () => Promise<void> = async () => undefined): Promise<void> {
+  let ran = false;
   for (let attempt = 1; ; attempt += 1) {
     const doc = await ctx.store.get(COLLECTION, id);
     if (doc === null) throw new OpError(`no workbook "${id}"`, 404);
@@ -163,7 +166,9 @@ export async function removeWorkbook(ctx: Ctx, id: string, beforeDocument: () =>
         throw new DataError(`could not delete the stored state of workbook "${id}"`, { cause });
       });
     }
-    await beforeDocument();
+    // Once only: after it the grants are gone, and a second run would be refused.
+    if (!ran) await beforeDocument();
+    ran = true;
     try {
       await ctx.store.transaction(async (tx) => {
         const now = await tx.get(COLLECTION, id);
@@ -173,8 +178,10 @@ export async function removeWorkbook(ctx: Ctx, id: string, beforeDocument: () =>
       });
       return;
     } catch (error) {
-      if (error instanceof StoreConflictError) throw new OpError("another writer changed the workbook. Try again", 409);
-      if (!(error instanceof Stale) || attempt >= ATTEMPTS) throw error;
+      if (!(error instanceof Stale || error instanceof StoreConflictError) || attempt >= ATTEMPTS) {
+        if (error instanceof StoreConflictError) throw new OpError("another writer changed the workbook. Try again", 409);
+        throw error;
+      }
     }
   }
 }
