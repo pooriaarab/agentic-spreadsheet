@@ -116,14 +116,10 @@ export class Workbook {
   constructor(doc: Y.Doc = new Y.Doc()) {
     this.doc = doc;
     this.sheets = doc.getArray("sheets");
-    // A write to a cell or a width changes neither the order nor the names, so it keeps both caches.
     this.checkKeys();
     this.sheets.observeDeep((events) => {
-      for (const event of events) {
-        if (event instanceof Y.YMapEvent && event.path.length === 2 && event.path[1] === "cells" && this.sheets.get(event.path[0] as number)?.has("id")) {
-          for (const key of event.keysChanged) if (event.target.has(key) && oldKey(key)) this.oldKeys = true;
-        }
-      }
+      for (const event of events) this.watchKeys(event);
+      // A write to a cell or a width changes neither the order nor the names, so it keeps both caches.
       if (events.some(({ path }) => !(path.length === 2 && (path[1] === "cells" || path[1] === "widths")))) this.invalidate();
     });
     this.migrate();
@@ -133,21 +129,44 @@ export class Workbook {
   // order for the same sheets, and the merge keeps one of them, so row edits made after the
   // conversion can be lost, rows can read in the wrong place, and two sheets can share an id.
   // Every read and write throws until the workbook is loaded again from one copy.
+  // A sheet that comes without an id after a conversion is tagged by its name, so one copy that
+  // converts it is no clash, and two copies that convert the same sheet are.
   conversionClash(): boolean {
-    return this.doc.getMap("conversions").size > 1;
+    const late = new Set<string>();
+    let full = 0;
+    for (const tag of this.doc.getMap("conversions").keys()) {
+      if (!tag.startsWith("late:")) full += 1;
+      else if (late.has(tag.split(":")[1])) return true;
+      else late.add(tag.split(":")[1]);
+    }
+    return full > 1;
   }
 
   // A sheet that has an id is in the new form. A cell key in the old form on it would read as empty,
   // so the workbook refuses every read and write instead.
-  private checkKeys(): void {
-    for (const sheet of this.sheets) {
+  private checkKeys(sheets: Iterable<YSheet> = this.sheets): void {
+    for (const sheet of sheets) {
       if (sheet.has("id") && [...this.cells(sheet).keys()].some(oldKey)) this.oldKeys = true;
+    }
+  }
+
+  // The same check for a change that arrives after the load: a key in a cells map, a cells map that
+  // is replaced, or a sheet that is added.
+  private watchKeys(event: Y.YEvent<any>): void {
+    const { path } = event;
+    if (event instanceof Y.YArrayEvent && path.length === 0) {
+      for (const item of event.changes.added) this.checkKeys(item.content.getContent().filter((v): v is YSheet => v instanceof Y.Map));
+    } else if (event instanceof Y.YMapEvent && path.length === 1 && (event.keysChanged.has("cells") || event.keysChanged.has("id"))) {
+      const sheet = this.sheets.get(path[0] as number);
+      if (sheet !== undefined) this.checkKeys([sheet]);
+    } else if (event instanceof Y.YMapEvent && path.length === 2 && path[1] === "cells" && this.sheets.get(path[0] as number)?.has("id")) {
+      for (const key of event.keysChanged) if (event.target.has(key) && oldKey(key)) this.oldKeys = true;
     }
   }
 
   private usable(): void {
     if (this.oldKeys) {
-      throw new SheetError("a sheet in this workbook holds a cell key in the old A1 form, so those cells would read as empty; convert the old copy with Workbook.fromState before it merges");
+      throw new SheetError("a sheet in this workbook holds a cell key in the old A1 form, so those cells would read as empty; restore the workbook from a copy saved before that key arrived");
     }
     if (this.sheets.toArray().some((sheet) => !sheet.has("id"))) {
       throw new SheetError("this workbook has a sheet in the old A1 form; load it with Workbook.fromState so it converts");
@@ -207,9 +226,12 @@ export class Workbook {
       // keeps a converted id apart from the ids that newIds makes, which use a dot.
       const prefix = this.doc.clientID.toString(36);
       // A workbook that was converted before has its tag. A sheet that came without an id after
-      // that converts without a second tag, so the workbook does not read as a clash.
+      // that gets a tag with its own name, so the workbook does not read as a clash until a second
+      // copy converts the same sheet.
       const tags = this.doc.getMap("conversions");
-      if (tags.size === 0) tags.set(prefix, true);
+      if ([...tags.keys()].some((tag) => !tag.startsWith("late:"))) {
+        for (const sheet of legacy) tags.set(`late:${(sheet.get("name") as string).toLowerCase()}:${prefix}`, true);
+      } else tags.set(prefix, true);
       all.forEach((sheet, i) => sheet.has("id") || sheet.set("id", `${prefix}:s${i}`));
       const idOf = (name: string) => all.find((sheet) => sameSheet(sheet.get("name") as string, name))?.get("id") as string | undefined;
       for (const sheet of legacy) {
