@@ -111,6 +111,46 @@ describe("client against the Worker", () => {
     expect((await failure(bot.read({ book: "trip", range: "A1" }))).code).toBe("not_found");
   });
 
+  test("structure calls change rows, columns, and sheets, and a formula follows or reads #REF!", async () => {
+    const bot = as(KEY_A);
+    await bot.create({ book: "shape" });
+    await bot.write({ book: "shape", anchor: "A1", values: [[1, 2, "=A1+B1"], [3, 4, "=A2+B2"]] });
+    expect(await bot.insertCols({ book: "shape", at: 1 })).toEqual({ ok: true });
+    expect((await bot.read({ book: "shape", range: "B1:D1" })).formulas[0]).toEqual([null, null, "=B1+C1"]);
+    expect(await bot.deleteCols({ book: "shape", at: 1 })).toEqual({ ok: true });
+    expect(await bot.deleteRows({ book: "shape", at: 1, count: 1 })).toEqual({ ok: true });
+    expect((await bot.read({ book: "shape", range: "A1:C1" })).values).toEqual([[3, 4, 7]]);
+    await bot.write({ book: "shape", anchor: "A3", values: [["=A1"]] });
+    await bot.deleteRows({ book: "shape", at: 1 });
+    expect((await bot.read({ book: "shape", range: "A2:A2" })).values).toEqual([[{ error: "#REF!" }]]);
+    expect(await bot.addSheet({ book: "shape", name: "Data 2" })).toEqual({ ok: true, sheets: ["Sheet1", "Data 2"] });
+    await bot.write({ book: "shape", anchor: "A1", values: [[5]], sheet: "Data 2" });
+    expect(await bot.sheets({ book: "shape" })).toEqual({ sheets: [{ name: "Sheet1", extent: "A1:A2" }, { name: "Data 2", extent: "A1:A1" }] });
+    expect(await bot.deleteSheet({ book: "shape", name: "Data 2" })).toEqual({ ok: true, sheets: ["Sheet1"] });
+    expect(await failure(bot.deleteSheet({ book: "shape", name: "Sheet1" }))).toMatchObject({ status: 400, code: "bad_request" });
+    expect(await failure(bot.addSheet({ book: "shape", name: "Sheet1" }))).toMatchObject({ status: 400 });
+    expect(await failure(bot.deleteRows({ book: "shape", at: 0 }))).toMatchObject({ status: 400 });
+  });
+
+  test("a viewer cannot change the structure, and a stranger sees no workbook", async () => {
+    const bot = as(KEY_A);
+    await bot.create({ book: "shape2" });
+    await bot.share({ book: "shape2", kind: "human", subject: "vic", role: "viewer" });
+    const viewer = as(KEY_V);
+    expect((await viewer.sheets({ book: "shape2" })).sheets).toHaveLength(1);
+    const attempts = [
+      () => viewer.addSheet({ book: "shape2", name: "X" }),
+      () => viewer.deleteRows({ book: "shape2", at: 1 }),
+      () => viewer.insertCols({ book: "shape2", at: 1 }),
+      () => viewer.deleteSheet({ book: "shape2", name: "Sheet1" }),
+    ];
+    for (const attempt of attempts) {
+      expect(await failure(attempt())).toMatchObject({ status: 403, code: "forbidden" });
+    }
+    expect((await failure(as(KEY_H).sheets({ book: "shape2" }))).code).toBe("not_found");
+    expect((await failure(as(KEY_H).deleteCols({ book: "shape2", at: 1 }))).code).toBe("not_found");
+  });
+
   test("a failed formula reads as an error value", async () => {
     const bot = as(KEY_A);
     await bot.create({ book: "errs" });

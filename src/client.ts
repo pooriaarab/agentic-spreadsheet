@@ -113,6 +113,22 @@ export function createClient({ baseUrl, token, fetch: fetchImpl }: ClientOptions
     /** `POST /:book/rows`. */
     insertRows: ({ book: id, ...body }: { book: string; at: number; count?: number } & SheetTarget, opts: CallOptions = {}) =>
       json<{ ok: true }>("POST", `${book(id)}/rows`, opts, { body }),
+    /** `DELETE /:book/rows`. A formula that points at a deleted cell reads `#REF!`. */
+    deleteRows: ({ book: id, ...query }: { book: string; at: number; count?: number } & SheetTarget, opts: CallOptions = {}) =>
+      json<{ ok: true }>("DELETE", `${book(id)}/rows`, opts, { query }),
+    /** `POST /:book/cols`. `at` is a column number, and A is 1. */
+    insertCols: ({ book: id, ...body }: { book: string; at: number; count?: number } & SheetTarget, opts: CallOptions = {}) =>
+      json<{ ok: true }>("POST", `${book(id)}/cols`, opts, { body }),
+    /** `DELETE /:book/cols`. */
+    deleteCols: ({ book: id, ...query }: { book: string; at: number; count?: number } & SheetTarget, opts: CallOptions = {}) =>
+      json<{ ok: true }>("DELETE", `${book(id)}/cols`, opts, { query }),
+    /** `GET /:book/sheets`. Each sheet comes with its used range, or `null` when it is empty. */
+    sheets: ({ book: id }: { book: string }, opts: CallOptions = {}) => json<{ sheets: { name: string; extent: string | null }[] }>("GET", `${book(id)}/sheets`, opts),
+    /** `POST /:book/sheets`. */
+    addSheet: ({ book: id, ...body }: { book: string; name: string }, opts: CallOptions = {}) => json<{ ok: true; sheets: string[] }>("POST", `${book(id)}/sheets`, opts, { body }),
+    /** `DELETE /:book/sheets/:name`. The last sheet stays. */
+    deleteSheet: ({ book: id, name }: { book: string; name: string }, opts: CallOptions = {}) =>
+      json<{ ok: true; sheets: string[] }>("DELETE", `${book(id)}/sheets/${segment(name)}`, opts),
     /** `GET /:book/export`. Resolves to the CSV text. */
     exportCsv: async ({ book: id, ...query }: { book: string } & SheetTarget, opts: CallOptions = {}) => (await send("GET", `${book(id)}/export`, opts, { query })).text(),
     /** `POST /:book/import`. */

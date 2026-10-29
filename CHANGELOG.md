@@ -5,6 +5,11 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Operations `delete-rows`, `insert-cols`, `delete-cols`, `sheets`, `add-sheet`, and `delete-sheet`. Each has a
+  CLI command, an MCP tool, an HTTP route, and a client method.
+
 ## [0.4.0] - 2026-10-29
 
 ### Added

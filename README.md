@@ -57,7 +57,7 @@ try {
 }
 ```
 
-Methods: `list`, `create`, `read`, `write`, `setFormula`, `insertRows`, `exportCsv`, `importCsv`, `share`,
+Methods: `list`, `create`, `read`, `write`, `setFormula`, `insertRows`, `deleteRows`, `insertCols`, `deleteCols`, `sheets`, `addSheet`, `deleteSheet`, `exportCsv`, `importCsv`, `share`,
 `unshare`, `remove`, and `health`. Each takes the same fields as its route, plus an optional
 `{ signal }` as the second argument to cancel the call. Pass `fetch` to `createClient` to use your own.
 
@@ -79,7 +79,8 @@ npx agentic-spreadsheet mcp                 # MCP server on stdio
 ```
 
 The CLI and the MCP server share one list of operations: `new`, `list`, `read`, `write`,
-`formula`, `insert-rows`, `export` (CSV), `import`. MCP tool names start with `sheet_`.
+`formula`, `insert-rows`, `delete-rows`, `insert-cols`, `delete-cols`, `sheets`, `add-sheet`, `delete-sheet`,
+`export` (CSV), `import`. MCP tool names start with `sheet_`.
 A write needs `--as <id>` and `--kind <kind>` (or `SHEET_AS` and `SHEET_KIND`). There is no default
 kind. An agent sets `agent`, `agent_of_human`, or `agent_of_agent`. A read needs neither.
 `import` takes `--as-text`: a cell that starts with `=` stays text. Use it for CSV you do not trust.
@@ -104,7 +105,9 @@ curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/
 | `GET /` and `POST /` | `list` and `new` |
 | `GET /:book/range` and `PUT /:book/range` | `read` and `write` |
 | `PUT /:book/formula` | `formula` |
-| `POST /:book/rows` | `insert-rows` |
+| `POST /:book/rows` and `DELETE /:book/rows?at=&count=` | `insert-rows` and `delete-rows` |
+| `POST /:book/cols` and `DELETE /:book/cols?at=&count=` | `insert-cols` and `delete-cols` (`at` is a column number, A is 1) |
+| `GET /:book/sheets`, `POST /:book/sheets`, and `DELETE /:book/sheets/:name` | `sheets`, `add-sheet`, and `delete-sheet` |
 | `GET /:book/export` and `POST /:book/import` | `export` (CSV) and `import` |
 | `PUT /:book/share` and `DELETE /:book/share/:kind/:subject` | Give a person (`human`) or an agent (`agent`) a role (`viewer`, `commenter`, `editor`), and take it back |
 | `DELETE /:book` | The owner deletes the workbook, and its grants, invites, links, and audit entries go with it |
