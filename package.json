@@ -59,7 +59,8 @@
     "clean": "rm -rf dist",
     "ci:local": "npm run build && npm run typecheck && npm test && npm run test:e2e",
     "dev:ui": "WRANGLER_SEND_METRICS=false wrangler dev",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "deploy:demo": "npm run build && WRANGLER_SEND_METRICS=false wrangler deploy --config wrangler.demo.jsonc"
   },
   "dependencies": {
     "@formulajs/formulajs": "^4.6.1",

@@ -1,0 +1,20 @@
+// The live demo on workers.dev. Deploy with `npm run deploy:demo`. See "Live demo" in the README.
+{
+  "name": "agentic-spreadsheet-demo",
+  "main": "src/ui-worker.ts",
+  "compatibility_date": "2026-01-01",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": false,
+  "vars": {
+    "PACK_NAME": "agentic-spreadsheet",
+    // The database is in weur and the bucket has the eu jurisdiction.
+    "SHEETS_REGION": "eu"
+  },
+  "assets": { "directory": "./dist/ui", "binding": "ASSETS", "not_found_handling": "single-page-application", "run_worker_first": ["/api/*", "/health"] },
+  "durable_objects": { "bindings": [{ "name": "SYNC_ROOM", "class_name": "SyncRoom" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["SyncRoom"] }],
+  // Set the API keys as a secret: `wrangler secret put SHEETS_API_KEYS --config wrangler.demo.jsonc`. Never put them in this file.
+  "d1_databases": [{ "binding": "DB", "database_name": "agentic-spreadsheet-demo", "database_id": "ea715d13-ffb8-457f-b057-cc78b56f7fee" }],
+  "r2_buckets": [{ "binding": "BLOBS", "bucket_name": "agentic-spreadsheet-demo-data", "jurisdiction": "eu" }]
+}

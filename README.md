@@ -91,6 +91,23 @@ kind. An agent sets `agent`, `agent_of_human`, or `agent_of_agent`. A read needs
 `export` and `import` handle sheets of 150,000 rows and more. Export puts a `'` before text that
 starts with `+ - @` or a control character, and import removes it, so a round trip keeps the text.
 
+## Live demo
+
+A demo Worker runs at <https://agentic-spreadsheet-demo.hello-fd1.workers.dev>. It is a staging build. Open the
+address to see the web UI. `GET /health` answers 200 with no key. The API needs a key, and the demo does not
+publish one, so run your own Worker to try writes (see [HTTP API](#http-api)). The demo may be reset at any time.
+
+The demo uses `wrangler.demo.jsonc`: a D1 database in `weur`, an R2 bucket with the `eu` jurisdiction, and
+`SHEETS_REGION=eu`. To redeploy, a maintainer with a Cloudflare token runs:
+
+```sh
+CLOUDFLARE_API_TOKEN=<token> npm run deploy:demo
+```
+
+The API keys live in a Worker secret, never in the repo or in CI. Set them with
+`npx wrangler secret put SHEETS_API_KEYS --config wrangler.demo.jsonc`. To make your own demo, copy
+`wrangler.demo.jsonc`, change the name, and put your own database id and bucket name in it.
+
 ## HTTP API
 
 The Worker serves the same operations under `/api/v1/sheets`. Run `npm run build` first, because `wrangler.jsonc`
