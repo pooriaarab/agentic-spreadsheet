@@ -5,6 +5,8 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.9.0] - 2026-10-29
+
 ### Added
 
 - Sharing from the CLI and MCP. CLI commands `share`, `shares`, and `unshare`, and MCP tools `sheet_share`, `sheet_shares`, and `sheet_unshare`. They call the Worker, because roles live on the server: set `SHEET_URL` and `SHEET_TOKEN`. A local store has no roles, so the MCP tools exist only with a Worker. A URL with no token starts `mcp` without them and warns on stderr. The Worker has no share links, so there is no command for them.
@@ -12,6 +14,7 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
+- The `agentic-identity` dependency is `^0.7.0`, and `agentic-design` is `^0.3.0`. They were `^0.6.0` and `^0.2.0`.
 - `createFileStore(dir)` now wraps the file store of `agentic-identity/file`. The copy in this package is gone. A `store.json`
   or `workbooks/` folder from an earlier version is moved into the new format on the first call, a read included. The
   `workbooks/` files are left in place. A call that loses to another process is run again, up to 50 times. A process that waits for the file lock now blocks its event loop, for up to 5 seconds a try. Stop processes that run an earlier version before the first call, and use a writable folder for data that an earlier version wrote.
@@ -20,6 +23,14 @@ All notable changes to this project are listed here. The format follows
 
 - The `token` query parameter of the room URL. A room takes the key in the subprotocol entry or the `Authorization` header only.
 - The `staleMs` and `waitMs` options of `createFileStore`. The lock now waits 5 seconds and is taken over after 3.
+
+### Security
+
+- `zod` is `^4.6.6`, and the `overrides` field gives the same range to `agentic-design` and `agentic-formats`. It was `^3.25.0`. This clears GHSA-mrhx-c7xc-m3w5.
+
+### Fixed
+
+- The repository's publish workflow runs one release at a time for each ref. A second run waits for the first. Before, two runs could overlap. The package code does not change.
 
 ## [0.8.0] - 2026-10-29
 
