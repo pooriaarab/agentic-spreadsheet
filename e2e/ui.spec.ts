@@ -217,8 +217,8 @@ test("the presence socket signs in by subprotocol, keeps the key out of the URL,
   expect(await openSocket(book, "", [`agentic-spreadsheet.bearer.${b64url(ANA)}`])).toBe("refused");
   // BEN has no share on the book.
   expect(await openSocket(book, "", ["agentic-spreadsheet", `agentic-spreadsheet.bearer.${b64url(BEN)}`])).toBe("refused");
-  // The deprecated query key still works for one more release, and a bad subprotocol key is not rescued by it.
-  expect(await openSocket(book, `?token=${ANA}`)).toBe("");
+  // The query key is not read, alone or next to a bad subprotocol key.
+  expect(await openSocket(book, `?token=${ANA}`)).toBe("refused");
   expect(await openSocket(book, `?token=${ANA}`, ["agentic-spreadsheet", `agentic-spreadsheet.bearer.${b64url("wrong-key-wrong-key-wrong-key-00")}`])).toBe("refused");
 });
 

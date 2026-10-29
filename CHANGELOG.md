@@ -13,6 +13,7 @@ All notable changes to this project are listed here. The format follows
 
 ### Removed
 
+- The `token` query parameter of the room URL. A room takes the key in the subprotocol entry or the `Authorization` header only.
 - The `staleMs` and `waitMs` options of `createFileStore`. The lock now waits 5 seconds and is taken over after 3.
 
 ## [0.8.0] - 2026-10-29

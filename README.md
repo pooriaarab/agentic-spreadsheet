@@ -292,8 +292,8 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
   Run `UPDATE_SCREENSHOTS=1 npm run test:e2e` to make them again.
 - **Limits.** The grid shows the used range plus some room, up to 52 columns and 200 rows. The browser
   sends the key in the `agentic-spreadsheet.bearer.<key>` subprotocol entry when it joins a room, because a
-  browser cannot set a header on a WebSocket. The `token` query parameter still works but is deprecated, and
-  the next release removes it. Use HTTPS, and keep Worker logs private. There is no sign-in page for a person
+  browser cannot set a header on a WebSocket. The Worker does not read a `token` query parameter: a URL
+  reaches logs and proxies. Use HTTPS, and keep Worker logs private. There is no sign-in page for a person
   yet: the key is the sign-in.
 - **Hosting.** The npm package ships the UI files in `dist/ui`, but not the Worker that serves them.
   Read the files by path, from `node_modules/agentic-spreadsheet/dist/ui`. `exports` does not list them.
