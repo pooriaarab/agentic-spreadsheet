@@ -11,6 +11,7 @@ import { ANA, BEN, BOT } from "./keys.mjs";
 // - a cell an agent wrote looks like a person's cell, or only color tells them apart
 // - a peer's presence never shows, or shows after the peer left
 // - a load that fails or hangs shows nothing, or a failed request shows as success
+// - the presence socket puts the key in its URL, or the subprotocol key fails to sign in, or a bad key or an unshared person joins
 // - a view has an axe violation of WCAG 2.2 AA in light or dark
 
 const origin = `http://127.0.0.1:${process.env.E2E_PORT}`;
@@ -189,6 +190,36 @@ test("two people in one workbook see each other", async ({ browser }) => {
   await two.close();
   await expect(a.getByRole("list", { name: "Also here" }).getByRole("listitem")).toHaveCount(0, { timeout: 15_000 });
   await one.close();
+});
+
+const b64url = (text: string) => Buffer.from(text).toString("base64url");
+// Open a socket as a client would. The result is the protocol the server named, or "refused".
+function openSocket(book: string, url: string, protocols?: string[]) {
+  return new Promise<string>((resolve) => {
+    const socket = new WebSocket(`${origin.replace("http", "ws")}/api/v1/docs/${book}/ws${url}`, protocols);
+    socket.onopen = () => (socket.close(), resolve(socket.protocol));
+    socket.onerror = () => resolve("refused");
+  });
+}
+
+test("the presence socket signs in by subprotocol, keeps the key out of the URL, and refuses a bad key", async ({ page }) => {
+  const book = unique("sock");
+  await api(ANA).create({ book });
+  const urls: string[] = [];
+  page.on("websocket", (socket) => urls.push(socket.url()));
+  await signIn(page);
+  await page.goto(`/#/${book}`);
+  await expect(page.getByText("Live")).toBeVisible();
+  expect(urls.some((url) => url.includes(`/docs/${book}/ws`))).toBe(true);
+  expect(urls.every((url) => !url.includes("token=") && !url.includes(ANA))).toBe(true);
+  expect(await openSocket(book, "", ["agentic-spreadsheet", `agentic-spreadsheet.bearer.${b64url(ANA)}`])).toBe("agentic-spreadsheet");
+  expect(await openSocket(book, "", ["agentic-spreadsheet", `agentic-spreadsheet.bearer.${b64url("wrong-key-wrong-key-wrong-key-00")}`])).toBe("refused");
+  expect(await openSocket(book, "", [`agentic-spreadsheet.bearer.${b64url(ANA)}`])).toBe("refused");
+  // BEN has no share on the book.
+  expect(await openSocket(book, "", ["agentic-spreadsheet", `agentic-spreadsheet.bearer.${b64url(BEN)}`])).toBe("refused");
+  // The deprecated query key still works for one more release, and a bad subprotocol key is not rescued by it.
+  expect(await openSocket(book, `?token=${ANA}`)).toBe("");
+  expect(await openSocket(book, `?token=${ANA}`, ["agentic-spreadsheet", `agentic-spreadsheet.bearer.${b64url("wrong-key-wrong-key-wrong-key-00")}`])).toBe("refused");
 });
 
 test("a failed load shows an error with a retry, and a slow load shows a status", async ({ page }) => {

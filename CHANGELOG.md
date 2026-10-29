@@ -5,6 +5,16 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The presence room takes the key in the `agentic-spreadsheet.bearer.<key>` WebSocket subprotocol entry, next to the
+  bare `agentic-spreadsheet` entry, and the bundled UI sends it that way. The `Authorization` header still works.
+
+### Deprecated
+
+- The `token` query parameter of the room URL. It works for one more release, and never when the request offers a
+  subprotocol key. The next release removes it.
+
 ## [0.7.1] - 2026-10-29
 
 ### Changed
