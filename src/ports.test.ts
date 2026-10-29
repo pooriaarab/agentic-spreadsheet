@@ -87,6 +87,27 @@ describe("workbooks on shared ports", () => {
     expect(readdirSync(dir).filter((n) => n.includes("moving"))).toEqual([]);
   });
 
+  test("an empty old store.json does not bring back a leftover 0.1.0 folder, and two first calls both work", async () => {
+    const dir = fresh();
+    mkdirSync(join(dir, "workbooks"));
+    writeFileSync(join(dir, "workbooks", "ghost.json"), "{}");
+    writeFileSync(join(dir, "store.json"), JSON.stringify({ clock: 3, tables: { workbooks: {} } }));
+    expect((await createFileStore(dir).query("workbooks")).items).toEqual([]);
+    expect((await createFileStore(dir).query("workbooks")).items).toEqual([]);
+    const dir2 = fresh();
+    mkdirSync(join(dir2, "workbooks"));
+    writeFileSync(join(dir2, "workbooks", "one.json"), '{"name":"one"}');
+    const [a, b] = [createFileStore(dir2), createFileStore(dir2)];
+    await Promise.all([a.put("workbooks", "x", { name: "x" }), b.put("workbooks", "y", { name: "y" })]);
+    expect((await a.query("workbooks")).items.map((i) => i.id).sort()).toEqual(["one", "x", "y"]);
+  });
+
+  test("a corrupt store.json names the file", async () => {
+    const dir = fresh();
+    writeFileSync(join(dir, "store.json"), "{oops");
+    await expect(createFileStore(dir).get("workbooks", "a")).rejects.toThrow(/store\.json" is not an agentic-spreadsheet data file/);
+  });
+
   test("a read creates no directory", async () => {
     const dir = join(fresh(), "none");
     const ctx = ctxOf(createFileStore(dir), createFileBlobs(join(dir, "blobs")));

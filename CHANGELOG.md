@@ -8,7 +8,12 @@ All notable changes to this project are listed here. The format follows
 ### Changed
 
 - `createFileStore(dir)` now wraps the file store of `agentic-identity/file`. The copy in this package is gone. A `store.json`
-  or `workbooks/` folder from an earlier version is moved into the new format on first use. The `staleMs` and `waitMs` options are gone.
+  or `workbooks/` folder from an earlier version is moved into the new format on the first call, a read included. The
+  `workbooks/` files are left in place. A call that loses to another process is run again, up to 50 times.
+
+### Removed
+
+- The `staleMs` and `waitMs` options of `createFileStore`. The lock now waits 5 seconds and is taken over after 3.
 
 ### Added
 

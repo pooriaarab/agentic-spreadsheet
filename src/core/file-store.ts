@@ -1,6 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   assertBlobPutOptions,
   assertId,
@@ -10,6 +10,7 @@ import {
   type Blobs,
   type Doc,
   type Store,
+  StoreConflictError,
 } from "agentic-identity";
 import { createFileStore as createIdentityFileStore } from "agentic-identity/file";
 
@@ -26,7 +27,12 @@ function readOld(dir: string): Map<string, Map<string, Doc>> | null {
   const path = join(dir, "store.json");
   const tables = new Map<string, Map<string, Doc>>();
   if (existsSync(path)) {
-    const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
+    let raw: unknown;
+    try {
+      raw = JSON.parse(readFileSync(path, "utf8"));
+    } catch {
+      throw new Error(`"${path}" is not an agentic-spreadsheet data file`);
+    }
     if (!isObject(raw) || !isObject(raw.tables) || raw.format !== undefined) return null;
     for (const [name, rows] of Object.entries(raw.tables)) {
       if (!isObject(rows)) throw new Error(`"${path}" is not an agentic-spreadsheet data file`);
@@ -63,24 +69,79 @@ function readOld(dir: string): Map<string, Map<string, Doc>> | null {
   return tables;
 }
 
-/** A Store kept in `<dir>/store.json`, from agentic-identity. Data that an earlier version wrote there is moved into that format on first use. */
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+const MAX_ATTEMPTS = 50;
+/** Dirs whose data this process has seen in the new format. */
+const current = new Set<string>();
+
+/** Runs `use` again while it loses to another writer, as the Store port asks of a transaction. Other errors pass. */
+async function retrying<R>(use: () => Promise<R>): Promise<R> {
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      return await use();
+    } catch (error) {
+      if (!(error instanceof StoreConflictError) || attempt >= MAX_ATTEMPTS) throw error;
+      await sleep(Math.random() * Math.min(10 * attempt, 100));
+    }
+  }
+}
+
+/** Takes `<path>.migrating` for the length of `use`, so two processes do not move the same data. A lock older than a minute is taken over. */
+async function withMigrationLock<R>(path: string, use: () => Promise<R>): Promise<R> {
+  const lock = `${path}.migrating`;
+  const deadline = Date.now() + 30_000;
+  mkdirSync(dirname(path), { recursive: true });
+  for (;;) {
+    try {
+      closeSync(openSync(lock, "wx", 0o600));
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+    }
+    try {
+      if (Date.now() - statSync(lock).mtimeMs > 60_000) rmSync(lock, { force: true });
+    } catch {}
+    if (Date.now() > deadline) throw new StoreConflictError(`could not lock "${lock}" within 30000 ms`);
+    await sleep(20 + Math.random() * 30);
+  }
+  try {
+    return await use();
+  } finally {
+    rmSync(lock, { force: true });
+  }
+}
+
+/** A Store kept in `<dir>/store.json`, from agentic-identity. Data that an earlier version wrote there is moved into that format on the first call. */
 export function createFileStore(dir: string, options: FileStoreOptions = {}): Store {
   const path = join(dir, "store.json");
   const store = createIdentityFileStore({ ...options, path });
+  const migrate = () =>
+    withMigrationLock(path, async () => {
+      const old = readOld(dir); // Read again under the lock: another process may have moved it.
+      if (old !== null) {
+        // Build the new file beside the old one and rename it over, so a crash leaves one whole file.
+        const next = `${path}.${randomUUID()}.moving`;
+        try {
+          const target = createIdentityFileStore({ ...options, path: next });
+          await target.transaction(async (tx) => {
+            for (const [collection, rows] of old) for (const [id, doc] of rows) await tx.put(collection, id, doc);
+            // An empty store still gets a file, so a leftover 0.1.0 folder is not read again.
+            if (old.size === 0) {
+              await tx.put("workbooks", "probe", {});
+              await tx.delete("workbooks", "probe");
+            }
+          });
+          if (!existsSync(next)) await target.put("workbooks", "probe", {}).then(() => target.delete("workbooks", "probe"));
+          renameSync(next, path);
+        } finally {
+          rmSync(next, { force: true });
+        }
+      }
+      current.add(path);
+    });
   let moved: Promise<void> | undefined;
-  const migrate = async () => {
-    const old = readOld(dir);
-    if (old === null) return;
-    // Build the new file beside the old one and rename it over, so a crash leaves one whole file.
-    const next = `${path}.moving`;
-    rmSync(next, { force: true });
-    const target = createIdentityFileStore({ ...options, path: next });
-    for (const [collection, rows] of old) for (const [id, doc] of rows) await target.put(collection, id, doc);
-    if (existsSync(next)) renameSync(next, path);
-    else rmSync(path, { force: true }); // An old file with no documents.
-  };
   const ready = () => {
-    if (!existsSync(path) && !existsSync(join(dir, "workbooks"))) return Promise.resolve();
+    if (current.has(path) || (!existsSync(path) && !existsSync(join(dir, "workbooks")))) return Promise.resolve();
     moved ??= migrate().catch((error: unknown) => {
       moved = undefined;
       throw error;
@@ -89,11 +150,11 @@ export function createFileStore(dir: string, options: FileStoreOptions = {}): St
   };
   return {
     region: store.region,
-    get: async (collection, id) => (await ready(), store.get(collection, id)),
-    query: async (collection, query) => (await ready(), store.query(collection, query)),
-    put: async (collection, id, doc) => (await ready(), store.put(collection, id, doc)),
-    delete: async (collection, id) => (await ready(), store.delete(collection, id)),
-    transaction: async (fn) => (await ready(), store.transaction(fn)),
+    get: async (collection, id) => (await ready(), retrying(() => store.get(collection, id))),
+    query: async (collection, query) => (await ready(), retrying(() => store.query(collection, query))),
+    put: async (collection, id, doc) => (await ready(), retrying(() => store.put(collection, id, doc))),
+    delete: async (collection, id) => (await ready(), retrying(() => store.delete(collection, id))),
+    transaction: async (fn) => (await ready(), retrying(() => store.transaction(fn))),
   };
 }
 
