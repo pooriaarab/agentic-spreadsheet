@@ -83,8 +83,12 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
   );
   useEffect(() => void load(null), [load]);
 
-  // A switch to read only closes an open edit.
-  useEffect(() => void (readOnly && setDraft(null)), [readOnly]);
+  // A switch to read only closes an open edit and an open dialog.
+  useEffect(() => {
+    if (!readOnly) return;
+    setDraft(null);
+    setDialog(null);
+  }, [readOnly]);
 
   const editing = draft !== null;
   useEffect(() => {
@@ -235,7 +239,7 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
       <div className="as-row as-between">
         <h1>{book}</h1>
         <div className="as-row">
-          <span className="as-muted" role="status">{live === "connected" ? "Live" : live === "connecting" ? "Connecting…" : "Offline"}</span>
+          {token !== undefined && <span className="as-muted" role="status">{live === "connected" ? "Live" : live === "connecting" ? "Connecting…" : "Offline"}</span>}
           <PresenceStack entries={peers.map((p) => p.entry)} label="Also here" />
         </div>
       </div>
@@ -329,7 +333,7 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
               </tbody>
             </table>
           </div>
-          <p className="as-muted as-legend"><BotIcon className="as-mark" aria-hidden="true" /> A cell with this mark was written by an agent. Arrow keys move, Enter edits, Escape cancels, Tab moves on.</p>
+          <p className="as-muted as-legend"><BotIcon className="as-mark" aria-hidden="true" /> A cell with this mark was written by an agent. Arrow keys move{readOnly ? ", Tab moves on. This sheet is read only." : ", Enter edits, Escape cancels, Tab moves on."}</p>
         </>
       )}
 

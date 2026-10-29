@@ -170,8 +170,9 @@ If the Worker fails after it saves a new workbook and before it records the owne
 
 `agentic-spreadsheet/ui` renders the sheet into an element. It needs no framework in your app.
 You must install `react` and `react-dom` (version 19) yourself: `./ui` needs them as peer dependencies.
-Load the styles once with `agentic-spreadsheet/ui.css`. The file has the `agentic-design` tokens and base
-styles, and the fonts it needs. The grid classes start with `as-`. The sheet does not set the theme of
+Load the styles once with `agentic-spreadsheet/ui.css`. The file has the `agentic-design` tokens, the component styles, and the fonts
+it needs. It has no rule for `*`, `html`, `body`, headings, or links, so it leaves your page alone. The grid classes start with `as-`.
+The sheet puts one `<h1>` with the workbook name in your page. The sheet does not set the theme of
 your page: `agentic-design` reads `data-theme` on `<html>`, and your page owns that attribute.
 The sheet uses the typed client, so the page must reach the Worker API.
 
