@@ -143,7 +143,7 @@ describe("shared files", () => {
 });
 
 describe("sparse and wide sheets", () => {
-  test("export refuses a sheet whose extent is too large, fast, and still serves a wide small one", { timeout: 20_000 }, () => {
+  test("export refuses a sheet whose extent is too large, fast, and still serves a wide small one", () => {
     cli("new", "b");
     cli("write", "b", "A1", "[[1]]");
     cli("write", "b", "XFD1048576", "[[2]]");
