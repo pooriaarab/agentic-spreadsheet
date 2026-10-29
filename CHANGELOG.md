@@ -5,6 +5,33 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-29
+
+### Breaking changes
+
+- Node 22 or later is required. Version 0.1.0 said Node 18. `agentic-identity` 0.3.0 needs Node 22.
+- The CLI file store has a new layout. A workbook was one file per workbook. Now the store keeps
+  `store.json` and a `blobs/` folder. A 0.1.0 workbook is read as it is and moves into `store.json`
+  on the first write. A 0.1.0 workbook whose id starts and ends with two underscores, or is longer
+  than 256 characters, stops the store with an error that names the file. Rename the file, then try again.
+- The Worker checks a role on every workbook route. In 0.1.0 any valid key could use any workbook.
+  Now a key with no share gets 404, even for a workbook another key made. A role that is too low gets 403.
+  Only the owner shares. A workbook stored before sharing has no owner, and the Worker refuses it for every principal.
+- `createApp` and `Ctx` take a `blobs` port. Pass `createMemoryBlobs()` or `createFileBlobs(dir)`, as well as the `Store`.
+- `list` sorts ids by code unit, and a cursor is opaque. Pass back the `cursor` that `list` returned.
+- A new workbook id may not start and end with two underscores, and may not pass 256 characters.
+- A writer that meets other writers gives up after 50 tries with 409 "Try again".
+- Removed exports: `MemoryStore`, `FileStore`, `queryDocs`, `SAFE_NAME`, and the types `Doc`,
+  `QueryOptions`, and `QueryResult`. Use `createMemoryStore` and `createFileStore`.
+- A custom `Store` must match the `agentic-identity` port. It has `region` in place of `jurisdiction`.
+  A query returns `nextCursor`, not `cursor`. A transaction may run its function again, or throw `StoreConflictError`.
+
+### Added
+
+- Each new workbook records its creator as its owner. The owner shares it with a principal id and a role:
+  `viewer`, `commenter`, or `editor`. The owner takes a share back.
+- `PUT /api/v1/sheets/:book/share` gives a role. `DELETE /api/v1/sheets/:book/share/:subject` takes it back.
+
 ### Changed
 
 - Storage uses the `Store` and `Blobs` ports of `agentic-identity`. The CLI file store keeps a
@@ -17,7 +44,7 @@ All notable changes to this project are listed here. The format follows
 
 ### Removed
 
-- `MemoryStore`, `FileStore`, `queryDocs`, `SAFE_NAME`, and the types `Doc`, `QueryOptions`, and `QueryResult`. Use `createMemoryStore`, `createFileStore`, and the `Store` type.
+- `MemoryStore`, `FileStore`, `queryDocs`, `SAFE_NAME`, and the types `Doc`, `QueryOptions`, and `QueryResult`. See Breaking changes.
 
 ## [0.1.0] - 2026-10-29
 
