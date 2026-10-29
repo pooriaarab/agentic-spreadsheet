@@ -47,7 +47,7 @@ let url = "";
 beforeAll(async () => {
   for (let attempt = 1; ; attempt += 1) {
     const [port, inspector] = await freePorts(2);
-    const args = [WRANGLER, "dev", "--port", String(port), "--inspector-port", String(inspector), "--ip", "127.0.0.1", "--var", `SHEETS_API_KEYS:${KEYS}`];
+    const args = [WRANGLER, "dev", "--port", String(port), "--inspector-port", String(inspector), "--ip", "127.0.0.1", "--persist-to", join(home, "state"), "--var", "SHEETS_REGION:unknown", "--var", "SHEETS_UNSAFE_REGION:1", "--var", `SHEETS_API_KEYS:${KEYS}`];
     const env = { ...process.env, CI: "1", NO_COLOR: "1", WRANGLER_SEND_METRICS: "false", XDG_CONFIG_HOME: home, HOME: home };
     const child: ChildProcess = spawn(process.execPath, args, { env, stdio: ["ignore", "pipe", "pipe"], detached: true });
     let [exited, log] = [false, ""];

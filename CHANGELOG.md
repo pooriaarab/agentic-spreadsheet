@@ -5,6 +5,16 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Breaking changes
+
+- The Worker keeps workbooks and shares in D1 and R2, not in memory. It needs a D1 binding `DB`, an R2 binding
+  `BLOBS`, and `SHEETS_REGION` (`eu` or `us`). Without them it answers 500. Under `wrangler dev`, set
+  `SHEETS_REGION=unknown` and `SHEETS_UNSAFE_REGION=1`. `wrangler.jsonc` declares the bindings.
+
+### Changed
+
+- Data survives a Worker restart. The in-memory store stays in the SDK for tests.
+
 ## [0.5.0] - 2026-10-29
 
 ### Breaking changes
