@@ -233,6 +233,24 @@ Every kind but `human` counts as an agent.
 The owner cannot lower its own role. Each check adds an audit entry to the store, and nothing limits how many.
 If the Worker fails after it saves a new workbook and before it records the owner, the book has no owner.
 
+### Mount the API in your own Worker
+
+`createApp` from `agentic-spreadsheet/worker` builds the Hono app that serves the API above. It takes:
+
+- `store` and `blobs`: the `Store` and `Blobs` ports of `agentic-identity`. Use `createMemoryStore()` and `createMemoryBlobs()` for tests. A Cloudflare Worker uses the D1 and R2 adapters of `agentic-identity/cloudflare`.
+- `authenticate`: a function that reads a request and returns the caller, or `null`. A `null` answers 401. `fromAuth(auth)` from the same entry adapts an `Auth` port of `agentic-identity`.
+- `pack` (optional): the name that `GET /health` returns. The default is `agentic-spreadsheet`.
+
+```ts
+import { createApp, fromAuth } from "agentic-spreadsheet/worker";
+import { createMemoryBlobs, createMemoryStore } from "agentic-spreadsheet";
+
+const app = createApp({ store: createMemoryStore(), blobs: createMemoryBlobs(), authenticate: fromAuth(auth), pack: "my-app" }); // auth: your Auth port of agentic-identity
+export default app; // a Hono app: app.fetch(request) answers the routes above
+```
+
+The app runs the same operations as the table above, under `/api/v1/sheets`. It limits each request body to 5 MB and sets `Cache-Control: no-store`. It reads no key or setting of its own, so the host decides who signs in. The default export of `agentic-spreadsheet/worker` builds this app from the `DB` and `BLOBS` bindings, `SHEETS_REGION`, and `SHEETS_API_KEYS`.
+
 ## Mount the sheet in your page
 
 `agentic-spreadsheet/ui` renders the sheet into an element. It needs no framework in your app.
