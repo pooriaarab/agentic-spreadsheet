@@ -19,7 +19,6 @@ All notable changes to this project are listed here. The format follows
 - The presence room takes the key in the `agentic-spreadsheet.bearer.<key>` WebSocket subprotocol entry, next to the
   bare `agentic-spreadsheet` entry, and the bundled UI sends it that way. The `Authorization` header still works.
 - The sync worker and the browser presence client use `agentic-realtime` 0.4.1. Before, they used 0.3.0.
-- `roomGrant` throws when the identity check fails with a 5xx. Before, it returned `null`. The signature is the same.
 
 ### Deprecated
 
@@ -28,8 +27,8 @@ All notable changes to this project are listed here. The format follows
 
 ### Fixed
 
-- `agentic-spreadsheet mcp --help` and `mcp --version` print their text and exit with 0. Before, `mcp --help` started
-  the server and waited on stdin.
+- `agentic-spreadsheet mcp --help` and `mcp --version` print their text and exit with 0. Before, both started the
+  server and waited on stdin.
 
 ## [0.7.1] - 2026-10-29
 
