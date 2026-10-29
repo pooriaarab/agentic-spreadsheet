@@ -123,6 +123,20 @@ export class Workbook {
 
   // Edits that run in one outer transaction fire no event until it ends, so each edit that changes
   // the order or the names clears the caches itself.
+  // True when two copies converted different old states and then merged. Each copy made its own
+  // order for the same sheets, and the merge keeps one of them, so row edits made after the
+  // conversion can be lost and two sheets can share an id. Reads still work. Writes are refused
+  // until the workbook is loaded again from one copy.
+  conversionClash(): boolean {
+    return this.doc.getMap("conversions").size > 1;
+  }
+
+  private writable(): void {
+    if (this.conversionClash()) {
+      throw new SheetError("two copies converted different old states and then merged; load the workbook again from one copy");
+    }
+  }
+
   private invalidate(): void {
     this.layouts = new Map();
     this.shown.clear();
@@ -147,7 +161,10 @@ export class Workbook {
 
   private convert(all: YSheet[], legacy: YSheet[]): void {
     this.doc.transact(() => {
-      all.forEach((sheet, i) => sheet.has("id") || sheet.set("id", `s${i}`));
+      // The client id is in each sheet id, so sheets from two different conversions never share one.
+      const prefix = this.doc.clientID.toString(36);
+      this.doc.getMap("conversions").set(prefix, true);
+      all.forEach((sheet, i) => sheet.has("id") || sheet.set("id", `${prefix}.s${i}`));
       const idOf = (name: string) => all.find((sheet) => sameSheet(sheet.get("name") as string, name))?.get("id") as string | undefined;
       for (const sheet of legacy) {
         for (const axis of ["row", "col"] as const) {
@@ -205,6 +222,7 @@ export class Workbook {
   }
 
   addSheet(name: string, index: number = this.sheets.length): void {
+    this.writable();
     this.checkName(name);
     const sheet: YSheet = new Y.Map();
     sheet.set("id", newIds(this.doc, 1)[0]);
@@ -222,6 +240,7 @@ export class Workbook {
 
   // A rename changes the name and nothing else. A formula names its sheet by id, so it follows.
   renameSheet(name: string, to: string): void {
+    this.writable();
     const sheet = this.find(name);
     const renamed = !sameSheet(name, to);
     if (renamed) this.checkName(to);
@@ -262,6 +281,7 @@ export class Workbook {
 
   // A formula that points at the deleted sheet reads as #REF!.
   deleteSheet(name: string): void {
+    this.writable();
     const sheet = this.find(name);
     if (this.sheets.length === 1) throw new SheetError("cannot delete the last sheet");
     this.sheets.delete(this.sheets.toArray().indexOf(sheet), 1);
@@ -303,6 +323,7 @@ export class Workbook {
   // Rows from the top stay in view. The sheet keeps the key of the place of the last frozen row, so
   // an insert above it, or a delete of a row in it, moves the line with the rows.
   setFrozenRows(name: string, rows: number): void {
+    this.writable();
     if (!Number.isInteger(rows) || rows < 0 || rows > MAX_ROW) throw new SheetError(`invalid frozen rows ${rows}`);
     const sheet = this.find(name);
     if (rows === 0) sheet.delete("frozen");
@@ -311,6 +332,7 @@ export class Workbook {
   }
 
   setColumnWidth(name: string, column: string, width: number): void {
+    this.writable();
     const letters = column.toUpperCase();
     if (!/^[A-Z]{1,3}$/.test(letters) || colIndex(letters) > MAX_COL) throw new SheetError(`invalid column "${column}"`);
     if (typeof width !== "number" || !Number.isFinite(width) || width <= 0) throw new SheetError(`invalid column width ${width}`);
@@ -368,6 +390,7 @@ export class Workbook {
 
   // Write a grid of values, or formulas, with its top-left corner at `anchor`.
   writeRange(name: string, anchor: string, rows: CellInput[][], by: Principal): void {
+    this.writable();
     const sheet = this.find(name);
     const cells = this.cells(sheet);
     const start = parseCell(anchor);
@@ -392,6 +415,7 @@ export class Workbook {
   }
 
   setFormat(name: string, range: string, patch: CellFormatPatch, by: Principal): void {
+    this.writable();
     const sheet = this.find(name);
     const cells = this.cells(sheet);
     const span = this.span(range, MAX_FORMAT_CELLS);
@@ -452,6 +476,7 @@ export class Workbook {
   }
 
   private restructure(name: string, axis: Axis, op: "insert" | "delete", at: number, count: number): void {
+    this.writable();
     const max = this.check(axis, at, count);
     const sheet = this.find(name);
     const layout = this.layout(sheet, axis);
@@ -483,6 +508,7 @@ export class Workbook {
   }
 
   private move(name: string, axis: Axis, from: number, count: number, to: number): void {
+    this.writable();
     const max = this.check(axis, from, count);
     if (!Number.isInteger(to) || to < 1 || to > max + 1) throw new SheetError(`invalid ${axis} position ${to}`);
     if (to >= from && to <= from + count) return;

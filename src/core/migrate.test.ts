@@ -154,7 +154,8 @@ describe("a workbook saved with A1 keys", () => {
   });
 
   test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("copies that convert one state are not flagged (client ids %j)", (ids) => {
-    const [a, b] = [fork(legacyState(), ids[0]), fork(legacyState(), ids[1])];
+    const state = legacyState();
+    const [a, b] = [fork(state, ids[0]), fork(state, ids[1])];
     exchange(a, b);
     expect([a.conversionClash(), b.conversionClash()]).toEqual([false, false]);
     a.writeRange("Sheet1", "A1", [[1]], { id: "u1", kind: "human" });
