@@ -95,7 +95,8 @@ A request body is at most 5 MB. `GET /health` needs no key.
   `moveRows` and `moveCols` are in the SDK.
 - A workbook saved by an older version, with A1 keys, converts when it loads. Copies that
   convert the same saved state make the same edits, so they merge and keep what each writes after.
-  The CLI and the Worker convert under the store lock and save, so they never meet this case.
+  The CLI and the Worker convert under the store lock and save. They meet this case only if you
+  convert copies of one file on two machines and then merge them.
 - Column widths and frozen rows.
 - Insert and delete rows and columns. Formula refs follow the moved cells.
   A ref to a deleted cell becomes `#REF!`. A range shrinks or grows to match.
@@ -127,9 +128,10 @@ A request body is at most 5 MB. `GET /health` needs no key.
 - A write to a row that another writer deletes goes with the row. Two writers who move one row at
   once get one place for it, the same on both copies.
 - Two copies that convert different old states, and then merge, are flagged: `conversionClash()` is
-  true and writes throw until you load the workbook again from one copy. Reads still work and
-  keep every cell. Copies that convert one old state are not flagged. Save the converted workbook
-  before two writers share it.
+  true and every read and write throws until you load the workbook again from one copy, because
+  the merge keeps one order for each sheet and rows can read in the wrong place. Copies that convert
+  one old state are not flagged, whatever way they store deleted items. Keep a copy from before
+  the merge, and save the converted workbook before two writers share it.
 - A single ref follows a moved row. A range keeps the rows that stay between its ends: a row that
   moves out of a range leaves it, and a row that moves in joins it.
 - Two inserts made at once can push a cell past the last row. The workbook keeps the cell, but no

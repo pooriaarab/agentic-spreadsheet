@@ -85,15 +85,26 @@ type Axis = "row" | "col";
 const ORDER_KEY = { row: "rowOrder", col: "colOrder" } as const;
 const GONE_KEY = { row: "rowGone", col: "colGone" } as const;
 const counters = new WeakMap<Y.Doc, number>();
-// The client id for the edits of a conversion. It comes from the state that is converted, so copies
-// that convert the same state make the same edits and Yjs sees one set. Copies that convert
-// different states get different ids, so their edits cannot clash.
+// The client id for the edits of a conversion. It comes from the content that is converted, not
+// from how a copy stores it, so copies that convert one state make the same edits and Yjs sees one
+// set. Copies that convert different states get different ids, so their edits cannot clash.
 function conversionClient(doc: Y.Doc): number {
+  const text = canonical(doc.getArray("sheets").toJSON());
   let id = 0x811c9dc5;
-  for (const byte of Y.encodeStateAsUpdate(doc)) id = Math.imul(id ^ byte, 0x01000193) >>> 0;
+  for (let i = 0; i < text.length; i += 1) id = Math.imul(id ^ text.charCodeAt(i), 0x01000193) >>> 0;
   const known = Y.decodeStateVector(Y.encodeStateVector(doc));
   while (id === 0 || known.has(id)) id = (id + 1) >>> 0;
   return id;
+}
+
+// JSON with the keys of each object in order.
+function canonical(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (typeof value === "object" && value !== null) {
+    const entries = Object.entries(value).filter(([, v]) => v !== undefined).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
+    return `{${entries.map(([key, v]) => `${JSON.stringify(key)}:${canonical(v)}`).join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 // New ids, unique across every copy of the workbook: the client id of this copy, then a count.
@@ -121,22 +132,22 @@ export class Workbook {
     this.migrate();
   }
 
-  // Edits that run in one outer transaction fire no event until it ends, so each edit that changes
-  // the order or the names clears the caches itself.
   // True when two copies converted different old states and then merged. Each copy made its own
   // order for the same sheets, and the merge keeps one of them, so row edits made after the
-  // conversion can be lost and two sheets can share an id. Reads still work. Writes are refused
-  // until the workbook is loaded again from one copy.
+  // conversion can be lost, rows can read in the wrong place, and two sheets can share an id.
+  // Every read and write throws until the workbook is loaded again from one copy.
   conversionClash(): boolean {
     return this.doc.getMap("conversions").size > 1;
   }
 
-  private writable(): void {
+  private usable(): void {
     if (this.conversionClash()) {
       throw new SheetError("two copies converted different old states and then merged; load the workbook again from one copy");
     }
   }
 
+  // Edits that run in one outer transaction fire no event until it ends, so each edit that changes
+  // the order or the names clears the caches itself.
   private invalidate(): void {
     this.layouts = new Map();
     this.shown.clear();
@@ -218,11 +229,12 @@ export class Workbook {
   }
 
   sheetNames(): string[] {
+    this.usable();
     return this.sheets.toArray().map((sheet) => sheet.get("name") as string);
   }
 
   addSheet(name: string, index: number = this.sheets.length): void {
-    this.writable();
+    this.usable();
     this.checkName(name);
     const sheet: YSheet = new Y.Map();
     sheet.set("id", newIds(this.doc, 1)[0]);
@@ -240,7 +252,6 @@ export class Workbook {
 
   // A rename changes the name and nothing else. A formula names its sheet by id, so it follows.
   renameSheet(name: string, to: string): void {
-    this.writable();
     const sheet = this.find(name);
     const renamed = !sameSheet(name, to);
     if (renamed) this.checkName(to);
@@ -281,7 +292,6 @@ export class Workbook {
 
   // A formula that points at the deleted sheet reads as #REF!.
   deleteSheet(name: string): void {
-    this.writable();
     const sheet = this.find(name);
     if (this.sheets.length === 1) throw new SheetError("cannot delete the last sheet");
     this.sheets.delete(this.sheets.toArray().indexOf(sheet), 1);
@@ -323,7 +333,6 @@ export class Workbook {
   // Rows from the top stay in view. The sheet keeps the key of the place of the last frozen row, so
   // an insert above it, or a delete of a row in it, moves the line with the rows.
   setFrozenRows(name: string, rows: number): void {
-    this.writable();
     if (!Number.isInteger(rows) || rows < 0 || rows > MAX_ROW) throw new SheetError(`invalid frozen rows ${rows}`);
     const sheet = this.find(name);
     if (rows === 0) sheet.delete("frozen");
@@ -332,7 +341,6 @@ export class Workbook {
   }
 
   setColumnWidth(name: string, column: string, width: number): void {
-    this.writable();
     const letters = column.toUpperCase();
     if (!/^[A-Z]{1,3}$/.test(letters) || colIndex(letters) > MAX_COL) throw new SheetError(`invalid column "${column}"`);
     if (typeof width !== "number" || !Number.isFinite(width) || width <= 0) throw new SheetError(`invalid column width ${width}`);
@@ -390,7 +398,6 @@ export class Workbook {
 
   // Write a grid of values, or formulas, with its top-left corner at `anchor`.
   writeRange(name: string, anchor: string, rows: CellInput[][], by: Principal): void {
-    this.writable();
     const sheet = this.find(name);
     const cells = this.cells(sheet);
     const start = parseCell(anchor);
@@ -415,7 +422,6 @@ export class Workbook {
   }
 
   setFormat(name: string, range: string, patch: CellFormatPatch, by: Principal): void {
-    this.writable();
     const sheet = this.find(name);
     const cells = this.cells(sheet);
     const span = this.span(range, MAX_FORMAT_CELLS);
@@ -476,7 +482,6 @@ export class Workbook {
   }
 
   private restructure(name: string, axis: Axis, op: "insert" | "delete", at: number, count: number): void {
-    this.writable();
     const max = this.check(axis, at, count);
     const sheet = this.find(name);
     const layout = this.layout(sheet, axis);
@@ -508,7 +513,6 @@ export class Workbook {
   }
 
   private move(name: string, axis: Axis, from: number, count: number, to: number): void {
-    this.writable();
     const max = this.check(axis, from, count);
     if (!Number.isInteger(to) || to < 1 || to > max + 1) throw new SheetError(`invalid ${axis} position ${to}`);
     if (to >= from && to <= from + count) return;
@@ -581,6 +585,7 @@ export class Workbook {
   }
 
   private find(name: string): YSheet {
+    this.usable();
     const sheet = this.sheets.toArray().find((s) => sameSheet(s.get("name") as string, name));
     if (sheet === undefined) throw new SheetError(`no sheet "${name}"`);
     return sheet;
