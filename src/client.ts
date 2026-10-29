@@ -2,12 +2,17 @@
 // It never retries: a write that fails may or may not have landed, and the caller decides what to do.
 
 export type Cell = string | number | boolean | null;
+/** A formula that fails reads as this object, such as `{ error: "#REF!" }`, never as a string. */
+export type FormulaError = { error: "#REF!" | "#DIV/0!" | "#NAME?" | "#VALUE!" | "#NUM!" | "#N/A" | "#CIRCULAR" | "#DEPTH!" };
+/** A computed value: what a cell holds, or the error of its formula. */
+export type Value = Cell | FormulaError;
+export type PrincipalKind = "human" | "agent_of_human" | "agent_of_agent" | "agent" | "user_token";
 export type SubjectKind = "human" | "agent";
 export type ShareRole = "viewer" | "commenter" | "editor";
 
 export interface CellAuthor {
   id: string;
-  kind: string;
+  kind: PrincipalKind;
   machine: boolean;
   at: string;
 }
@@ -34,7 +39,7 @@ export interface SheetTarget {
 export interface ReadResult {
   sheet: string;
   range: string;
-  values: Cell[][];
+  values: Value[][];
   formulas: (string | null)[][];
   authors: (CellAuthor | null)[][];
 }
@@ -62,15 +67,8 @@ export function createClient({ baseUrl, token, fetch: fetchImpl }: ClientOptions
   const origin = baseUrl.replace(/\/+$/, "");
   const root = `${origin}/api/v1/sheets`;
 
-  async function send(method: string, path: string, opts: CallOptions, init: { query?: Record<string, string | number | undefined>; body?: unknown } = {}): Promise<Response> {
-    const query = new URLSearchParams();
-    for (const [key, value] of Object.entries(init.query ?? {})) if (value !== undefined) query.set(key, String(value));
-    const qs = query.size > 0 ? `?${query}` : "";
-    const headers: Record<string, string> = { authorization: `Bearer ${token}` };
-    if (init.body !== undefined) headers["content-type"] = "application/json";
-    // Looked up on each call, so a test that replaces the global `fetch` is seen.
-    const res = await (fetchImpl ?? fetch)(`${root}${path}${qs}`, { method, headers, body: init.body === undefined ? undefined : JSON.stringify(init.body), signal: opts.signal });
-    if (res.ok) return res;
+  // The message comes from `{ error }` when the body has one.
+  async function failed(res: Response): Promise<SheetsApiError> {
     let message = `the API answered ${res.status}`;
     try {
       const body: unknown = await res.json();
@@ -78,7 +76,20 @@ export function createClient({ baseUrl, token, fetch: fetchImpl }: ClientOptions
     } catch {
       // The body is not JSON. Keep the status message.
     }
-    throw new SheetsApiError(res.status, message);
+    return new SheetsApiError(res.status, message);
+  }
+
+  async function send(method: string, path: string, opts: CallOptions, init: { query?: Record<string, string | number | undefined>; body?: unknown } = {}): Promise<Response> {
+    const query = new URLSearchParams();
+    for (const [key, value] of Object.entries(init.query ?? {})) if (value !== undefined) query.set(key, String(value));
+    const text = query.toString();
+    const qs = text === "" ? "" : `?${text}`;
+    const headers: Record<string, string> = { authorization: `Bearer ${token}` };
+    if (init.body !== undefined) headers["content-type"] = "application/json";
+    // Looked up on each call, so a test that replaces the global `fetch` is seen.
+    const res = await (fetchImpl ?? fetch)(`${root}${path}${qs}`, { method, headers, body: init.body === undefined ? undefined : JSON.stringify(init.body), signal: opts.signal });
+    if (res.ok) return res;
+    throw await failed(res);
   }
   async function json<T>(method: string, path: string, opts: CallOptions, init?: Parameters<typeof send>[3]): Promise<T> {
     return (await send(method, path, opts, init)).json() as Promise<T>;
@@ -98,7 +109,7 @@ export function createClient({ baseUrl, token, fetch: fetchImpl }: ClientOptions
       json<{ ok: true; rows: number }>("PUT", `${book(id)}/range`, opts, { body }),
     /** `PUT /:book/formula`. */
     setFormula: ({ book: id, ...body }: { book: string; cell: string; formula: string } & SheetTarget, opts: CallOptions = {}) =>
-      json<{ cell: string; formula: string; value: Cell }>("PUT", `${book(id)}/formula`, opts, { body }),
+      json<{ cell: string; formula: string; value: Value }>("PUT", `${book(id)}/formula`, opts, { body }),
     /** `POST /:book/rows`. */
     insertRows: ({ book: id, ...body }: { book: string; at: number; count?: number } & SheetTarget, opts: CallOptions = {}) =>
       json<{ ok: true }>("POST", `${book(id)}/rows`, opts, { body }),
@@ -118,7 +129,7 @@ export function createClient({ baseUrl, token, fetch: fetchImpl }: ClientOptions
     /** `GET /health`. It needs no key and sits outside `/api/v1/sheets`. */
     health: async (opts: CallOptions = {}) => {
       const res = await (fetchImpl ?? fetch)(`${origin}/health`, { signal: opts.signal });
-      if (!res.ok) throw new SheetsApiError(res.status, `the API answered ${res.status}`);
+      if (!res.ok) throw await failed(res);
       return res.json() as Promise<{ ok: true; pack: string; version: string }>;
     },
   };

@@ -101,6 +101,20 @@ describe("client against the Worker", () => {
     expect((await failure(bot.read({ book: "trip", range: "A1" }))).code).toBe("not_found");
   });
 
+  test("a failed formula reads as an error value", async () => {
+    const bot = as(KEY_A);
+    await bot.create({ book: "errs" });
+    expect(await bot.setFormula({ book: "errs", cell: "A1", formula: "1/0" })).toMatchObject({ value: { error: "#DIV/0!" } });
+    await bot.write({ book: "errs", anchor: "B1", values: [["=A1+1"]] });
+    await bot.insertRows({ book: "errs", at: 1 });
+    expect((await bot.read({ book: "errs", range: "A2:B2" })).values).toEqual([[{ error: "#DIV/0!" }, { error: "#DIV/0!" }]]);
+  });
+
+  test("health keeps the message of a failed start", async () => {
+    expect(await failure(createClient({ baseUrl: url, token: "x", fetch: async () => Response.json({ error: "the API cannot start: x" }, { status: 500 }) }).health()))
+      .toMatchObject({ status: 500, code: "server_error", message: "the API cannot start: x" });
+  });
+
   test("a wrong token is unauthorized, and the message does not echo it", async () => {
     const token = "x".repeat(KEY_A.length);
     const error = await failure(as(token).list());
@@ -142,6 +156,6 @@ describe("client against the Worker", () => {
 
   test("the client file has no Node import", () => {
     const source = readFileSync(fileURLToPath(new URL("./client.ts", import.meta.url)), "utf8");
-    expect(source).not.toMatch(/from\s+["'](node:|fs|path|http|buffer)/);
+    expect(source).not.toMatch(/^\s*import\s|require\(|\bBuffer\b|\bprocess\./m);
   });
 });

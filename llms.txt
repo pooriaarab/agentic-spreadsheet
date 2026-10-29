@@ -8,7 +8,7 @@ Keywords: spreadsheet,sheets,formulas,grid,collaboration,agents,mcp,cli,csv,xlsx
 - Remote SDK: import { createClient } from "agentic-spreadsheet/client". Calls the Worker API with fetch only.
   One method per route: list, create, read, write, setFormula, insertRows, exportCsv, importCsv, share, unshare,
   remove, health. A failed call throws SheetsApiError with status and code (bad_request, unauthorized,
-  forbidden, not_found, conflict, too_large, server_error). No retries. Pass { signal } to cancel.
+  forbidden, not_found, conflict, too_large, server_error, or unknown for another status). No retries. Pass { signal } to cancel.
 - CLI and MCP: run agentic-spreadsheet --help, or agentic-spreadsheet mcp.
 
 ## Docs
