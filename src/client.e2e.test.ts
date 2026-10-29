@@ -25,7 +25,7 @@ const KEY_A = "agent-key-0123456789-0123456789-abcdef";
 const KEY_H = "human-key-0123456789-0123456789-abcdef";
 const KEY_V = "viewer-key-0123456789-0123456789-abcde";
 const KEYS = JSON.stringify({
-  [KEY_A]: { id: "bot-1", kind: "agent_of_human" },
+  [KEY_A]: { id: "bot-1", kind: "agent_of_human", parent: "ana" },
   [KEY_H]: { id: "ana", kind: "human" },
   [KEY_V]: { id: "vic", kind: "human" },
 });

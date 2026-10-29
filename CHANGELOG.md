@@ -5,11 +5,29 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-29
+
 ### Breaking changes
+
+- The Worker reads each request through the `Auth` port of `agentic-identity` (`createStoreAuth`), not its own key
+  table. On start, it writes the keys of `SHEETS_API_KEYS` into the store as principals and credentials (only the
+  hash of a key is stored). A key can now have only letters, digits, `_` and `-`. A kind that acts for another
+  principal (`agent_of_human`, `agent_of_agent`, `user_token`) needs `"parent": "<id of another entry>"`. Before, no
+  entry had a parent.
 
 - The Worker keeps workbooks and shares in D1 and R2, not in memory. It needs a D1 binding `DB`, an R2 binding
   `BLOBS`, and `SHEETS_REGION` (`eu` or `us`). Without them it answers 500. Under `wrangler dev`, set
   `SHEETS_REGION=unknown` and `SHEETS_UNSAFE_REGION=1`. `wrangler.jsonc` declares the bindings.
+
+### Added
+
+- An entry in `SHEETS_API_KEYS` can set `scopes`, such as `["workbook:read"]`. A key cannot do more than its scopes
+  allow, whatever its role on a workbook. The default is `["*:admin"]`.
+- A key that you remove from `SHEETS_API_KEYS` stops working in that Worker at once. Its hash stays in the store
+  until you revoke it with `agentic-identity`. Credentials that another tool wrote to the store pass through.
+- The Worker refuses a start when two keys name one id, when a parent has the wrong kind, or when the store already
+  holds a principal of that id that this Worker did not make. A session cookie is not a credential: use a bearer key.
+- Named exports `fromAuth` (an `Authenticator` from any `Auth`) and `storageFor` (the D1 store and R2 blobs for an env) from `agentic-spreadsheet/worker`.
 
 ### Changed
 
