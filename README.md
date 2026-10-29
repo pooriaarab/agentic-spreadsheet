@@ -128,9 +128,9 @@ If the Worker fails after it saves a new workbook and before it records the owne
 
 ## UI
 
-A small web UI comes with the Worker in this repo, in `src/ui-worker.ts`. It uses the `agentic-design`
-package for tokens, controls, and dialogs, the typed client (`./client`) for every call, and a presence
-room from `agentic-realtime`.
+A small web UI comes with the Worker in this repo. The UI source is in `ui/`, and `src/ui-worker.ts` serves it.
+It uses the `agentic-design` package for tokens, controls, and dialogs, the typed client (`./client`) for
+every call, and a presence room from `agentic-realtime`.
 It has a list of workbooks, a sheet bar, a grid with A1 cells and a formula bar, edits for values
 and formulas, add and remove for rows, columns, and sheets, and light and dark themes.
 

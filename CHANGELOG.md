@@ -27,8 +27,9 @@ All notable changes to this project are listed here. The format follows
   package does not ship.
 - Operations `delete-rows`, `insert-cols`, `delete-cols`, `sheets`, `add-sheet`, and `delete-sheet`. Each has a
   CLI command, an MCP tool (`sheet_` prefix), an HTTP route, and a client method.
-  - HTTP: `DELETE /api/v1/sheets/:book/rows?at=&count=`, `POST` and `DELETE /api/v1/sheets/:book/cols?at=&count=`,
-    `GET` and `POST /api/v1/sheets/:book/sheets`, and `DELETE /api/v1/sheets/:book/sheets/:name`.
+  - HTTP: `DELETE /api/v1/sheets/:book/rows?at=&count=`, `POST /api/v1/sheets/:book/cols` (`at` and `count` in the
+    body), `DELETE /api/v1/sheets/:book/cols?at=&count=`, `GET` and `POST /api/v1/sheets/:book/sheets`, and
+    `DELETE /api/v1/sheets/:book/sheets/:name`.
 - Client methods `deleteRows`, `insertCols`, `deleteCols`, `sheets`, `addSheet`, and `deleteSheet`.
 - A named export `roomGrant` from `agentic-spreadsheet/worker`. It checks who may join a workbook's presence room.
 - The SDK exports `MAX_SHEET_NAME` (256), the longest sheet name that is accepted.
