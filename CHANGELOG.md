@@ -5,13 +5,45 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-29
+
+### Breaking changes
+
+- A delete of rows or columns that runs past the last row or column of the grid (row 1,048,576 or column XFD)
+  is refused with an error. Before, the call gave no error. Check the range before you delete.
+- A sheet name longer than 256 characters is refused when a sheet is added or renamed. Before, any length
+  was accepted. Names that already exist are not changed.
+- Deploying the Worker from a checkout needs `npm run build` before `wrangler dev` or `wrangler deploy`,
+  because `wrangler.jsonc` serves `dist/ui`. The first deploy also applies a new migration for the
+  `SYNC_ROOM` Durable Object. A path outside `/api/` and `/health` now gets the UI page, not 404.
+  The default export of `agentic-spreadsheet/worker` does not change.
+
 ### Added
 
-- A web UI, served by the Worker: workbook list, grid with a formula bar, edits, structure changes, presence,
-  and an agent marker. It runs on `agentic-design`, the typed client, and `agentic-realtime`. See the README, "UI".
-- Playwright end-to-end tests against `wrangler dev`, with an axe WCAG 2.2 AA check in light and dark.
+- A web UI, served by the Worker in this repo (`src/ui-worker.ts`): workbook list, grid with a formula bar,
+  edits, structure changes, presence, and an agent marker. It runs on `agentic-design`, the typed client, and
+  `agentic-realtime`. See the README, "UI".
+  The presence socket is `/api/v1/docs/:book/ws`. The browser sends the key in its `token` query parameter, so a
+  key can appear in request URLs and logs. Presence runs only in the Worker in `src/ui-worker.ts`, which the npm
+  package does not ship.
 - Operations `delete-rows`, `insert-cols`, `delete-cols`, `sheets`, `add-sheet`, and `delete-sheet`. Each has a
-  CLI command, an MCP tool, an HTTP route, and a client method.
+  CLI command, an MCP tool (`sheet_` prefix), an HTTP route, and a client method.
+  - HTTP: `DELETE /api/v1/sheets/:book/rows?at=&count=`, `POST /api/v1/sheets/:book/cols` (`at` and `count` in the
+    body), `DELETE /api/v1/sheets/:book/cols?at=&count=`, `GET` and `POST /api/v1/sheets/:book/sheets`, and
+    `DELETE /api/v1/sheets/:book/sheets/:name`.
+- Client methods `deleteRows`, `insertCols`, `deleteCols`, `sheets`, `addSheet`, and `deleteSheet`.
+- A named export `roomGrant` from `agentic-spreadsheet/worker`. It checks who may join a workbook's presence room.
+- The SDK exports `MAX_SHEET_NAME` (256), the longest sheet name that is accepted.
+
+### Changed
+
+- `npm run build` also builds the UI into `dist/ui`. `npm run typecheck` also checks the UI.
+- `ci:local` also runs the Playwright end-to-end tests against `wrangler dev`, with an axe WCAG 2.2 AA
+  check in light and dark. A machine that runs them needs the Playwright browser.
+- New scripts: `npm run dev:ui` starts `wrangler dev`, and `npm run test:e2e` runs the Playwright tests.
+- The package has no new runtime dependencies. `agentic-design`, `agentic-realtime`, `react`, and
+  `react-dom` are development dependencies. They are built into `dist/ui`. The npm package now ships the built UI
+  in `dist/ui`, about 475 kB.
 
 ## [0.4.0] - 2026-10-29
 

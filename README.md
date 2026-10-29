@@ -90,7 +90,8 @@ starts with `+ - @` or a control character, and import removes it, so a round tr
 
 ## HTTP API
 
-The Worker serves the same operations under `/api/v1/sheets`. Run it with `npx wrangler dev`.
+The Worker serves the same operations under `/api/v1/sheets`. Run `npm run build` first, because `wrangler.jsonc`
+serves `dist/ui` and wrangler needs that directory. Then run `npx wrangler dev`.
 
 ```sh
 # one key, at least 32 bytes, tied to one id and kind
@@ -127,8 +128,9 @@ If the Worker fails after it saves a new workbook and before it records the owne
 
 ## UI
 
-A small web UI comes with the Worker. It uses the `agentic-design` package for tokens, controls, and
-dialogs, the typed client (`./client`) for every call, and a presence room from `agentic-realtime`.
+A small web UI comes with the Worker in this repo. The UI source is in `ui/`, and `src/ui-worker.ts` serves it.
+It uses the `agentic-design` package for tokens, controls, and dialogs, the typed client (`./client`) for
+every call, and a presence room from `agentic-realtime`.
 It has a list of workbooks, a sheet bar, a grid with A1 cells and a formula bar, edits for values
 and formulas, add and remove for rows, columns, and sheets, and light and dark themes.
 
@@ -155,12 +157,22 @@ it. `.dev.vars` stays out of git. Data lives in memory, so a restart empties it.
 - **Tests.** `npm run test:e2e` runs Playwright against `wrangler dev`. It signs in, makes a sheet,
   enters a value and a formula, checks the result and a reload, checks the keys, the structure
   changes, the agent marker, and presence, and runs an axe WCAG 2.2 AA check on each view in light and dark.
-  Screenshots of each view in both themes are in [`docs/screenshots`](docs/screenshots).
+  Screenshots of each view in both themes are in [`docs/screenshots`](https://github.com/pooriaarab/agentic-spreadsheet/tree/main/docs/screenshots).
   Run `UPDATE_SCREENSHOTS=1 npm run test:e2e` to make them again.
 - **Limits.** The grid shows the used range plus some room, up to 52 columns and 200 rows. The browser
   sends the key as a `token` query parameter when it joins a room, because a browser cannot set a header on a
   WebSocket. Use HTTPS, and keep Worker logs private. There is no sign-in page for a person
   yet: the key is the sign-in.
+- **Hosting.** The npm package ships the UI files in `dist/ui`, but not the Worker that serves them.
+  Read the files by path, from `node_modules/agentic-spreadsheet/dist/ui`. `exports` does not list them.
+  A host must serve them at the root of an origin, because the asset paths start at `/`, and the UI calls
+  the API on its own origin.
+  The host answers every path under `/api/v1/sheets/`, and `/health`, with the default export of
+  `agentic-spreadsheet/worker`. Pass an `env` with `SHEETS_API_KEYS`, or the Worker answers 500.
+  Data lives in memory in that isolate.
+  Presence does not work this way yet. Its socket needs `agentic-realtime` and a `SyncRoom` Durable Object,
+  and `roomGrant` checks roles only in the Worker's own in-memory store. For presence, run the Worker from
+  a checkout, as `src/ui-worker.ts` does. Without presence, the UI still works and shows Offline.
 
 ## Features
 
