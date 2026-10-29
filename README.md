@@ -7,7 +7,7 @@
 
 Spreadsheets with formulas that people and agents edit together.
 
-> Status: early. The workbook model, formula engine, CLI, and MCP server work. It is not on npm yet.
+> Status: early. The workbook model, formula engine, CLI, and MCP server work. The package is on npm.
 > The HTTP API is a stopgap with in-memory storage.
 >
 > Warning: the HTTP API (the Worker) refuses to serve until you set `SHEETS_API_KEYS`, or set
@@ -22,6 +22,8 @@ Spreadsheets with formulas that people and agents edit together.
 ```sh
 npm install agentic-spreadsheet
 ```
+
+Node 22 or later.
 
 ## Quick start
 
@@ -115,7 +117,6 @@ If the Worker fails after it saves a new workbook and before it records the owne
   `ROUNDDOWN`, `ABS`, `CONCAT`, `TEXT`, `LEFT`, `RIGHT`, `MID`, `LEN`, `UPPER`, `LOWER`, `TRIM`,
   `DATE`, `TODAY`, `NOW`. Other names come from `@formulajs/formulajs` and are untested here.
   Blank cells in a range are skipped, as in a spreadsheet app. `MUNIT` and `EXPAND` return `#NAME?`.
-- CSV import and export. Export marks text that starts with `= + - @` so it cannot run as a formula.
 - CSV import and export. Export marks text that starts with `= + - @` so it cannot run as a formula.
 - Read a range. Write a range of values or formulas.
 - Every cell keeps the principal that last edited it. The kind is one of
