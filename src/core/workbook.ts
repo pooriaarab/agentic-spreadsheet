@@ -1,12 +1,11 @@
 import * as Y from "yjs";
+import { PRINCIPAL_KINDS, type PrincipalKind } from "agentic-identity";
 import { colIndex, colLetters, formatCell, MAX_COL, MAX_ROW, parseCell, parseRange, type RangePos } from "./a1.js";
 import { Layout, ROOT, type Entry } from "./order.js";
 import { hasControl, mapPlain, packRef, unpackRefs, type IdRef } from "./ref-ids.js";
 import { formatSpan, mapRefs, quoteSheet, sameSheet, type Flags } from "./refs.js";
 
-export type PrincipalKind = "human" | "agent_of_human" | "agent_of_agent" | "agent" | "user_token";
-
-export const PRINCIPAL_KINDS: readonly PrincipalKind[] = ["human", "agent_of_human", "agent_of_agent", "agent", "user_token"];
+export { PRINCIPAL_KINDS, type PrincipalKind };
 
 // The principal that makes an edit. The kind stays on every cell it writes.
 export interface Principal {
