@@ -12,6 +12,7 @@ All notable changes to this project are listed here. The format follows
 - `list` sorts ids by code unit (`B` before `a`), as the `Store` port does. With no limit it returns every id.
 - The file adapter writes under the store directory only on a write, and a broken 0.1.0 workbook file is an error.
 - A writer that keeps meeting other writers gives up after 50 tries and answers 409 "Try again". Version 0.1.0 waited on one lock.
+- A new workbook id may not start and end with two underscores, and may not pass 256 characters. These are the port rules.
 - A workbook list cursor is opaque. Pass back the `cursor` that `list` returned.
 
 ### Removed
