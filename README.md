@@ -37,6 +37,36 @@ wb.writeRange("Sheet1", "A1", [[1], [2], ["=SUM(A1:A2)"]], me);
 console.log(new Engine(wb).values("Sheet1", "A1:A3")); // [[1], [2], [3]]
 ```
 
+## SDK
+
+`agentic-spreadsheet/client` calls the Worker over HTTP. It uses only `fetch`, so it runs in browsers,
+Workers, and Node 22. It has one method for each route.
+
+```ts
+import { createClient, SheetsApiError } from "agentic-spreadsheet/client";
+
+const sheets = createClient({ baseUrl: "https://sheets.example.com", token: "<your-key>" });
+await sheets.create({ book: "budget" });
+await sheets.write({ book: "budget", anchor: "A1", values: [[10, 20, "=A1+B1"]] });
+const { values } = await sheets.read({ book: "budget", range: "A1:C1" }); // [[10, 20, 30]]
+
+try {
+  await sheets.read({ book: "missing", range: "A1" });
+} catch (error) {
+  if (error instanceof SheetsApiError) console.log(error.status, error.code, error.message); // 404 "not_found" ...
+}
+```
+
+Methods: `list`, `create`, `read`, `write`, `setFormula`, `insertRows`, `exportCsv`, `importCsv`, `share`,
+`unshare`, `remove`, and `health`. Each takes the same fields as its route, plus an optional
+`{ signal }` as the second argument to cancel the call. Pass `fetch` to `createClient` to use your own.
+
+A failed call throws `SheetsApiError` with the HTTP `status` and a `code`: `bad_request` (400),
+`unauthorized` (401), `forbidden` (403), `not_found` (404), `conflict` (409), `too_large` (413), or
+`server_error` (5xx). Any other status, such as a 429 from a proxy, is `unknown`. The API sends no code of its own, so the client names the status. A network failure, an abort, or
+a 2xx answer that is not JSON (for example from a wrong `baseUrl`) throws the error that `fetch` or `json()` throws. The client never retries. A write that fails may have landed:
+read the book before you send it again.
+
 ## CLI and MCP server
 
 ```sh

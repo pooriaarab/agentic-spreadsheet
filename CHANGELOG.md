@@ -5,6 +5,12 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `agentic-spreadsheet/client`: a typed client for the Worker HTTP API. `createClient({ baseUrl, token, fetch? })`
+  has one method for each route. A failed call throws `SheetsApiError` with the HTTP `status` and a `code`.
+  It uses only `fetch`, takes an `AbortSignal`, and never retries.
+
 ## [0.3.0] - 2026-10-29
 
 ### Breaking changes
