@@ -11,6 +11,7 @@ import { bearerAuth } from "./auth.js";
 import { createFileBlobs, createFileStore } from "./core/file-store.js";
 import { fromBase64, toBase64 } from "./core/bytes.js";
 import { createMemoryBlobs, createMemoryStore } from "agentic-identity";
+import { createAccess } from "./access.js";
 import { createApp } from "./worker.js";
 import { legacyState } from "./testing/legacy.js";
 
@@ -83,6 +84,8 @@ describe("a stored old workbook", () => {
     const key = "agent-key-0123456789-0123456789-abcdef";
     const store = createMemoryStore();
     await put(store, "old", legacyState());
+    // A workbook stored before sharing has no owner. The Worker refuses it until someone records one.
+    await createAccess(store).create({ id: "bot", kind: "agent_of_human" }, "old");
     const app = createApp({ store, blobs: createMemoryBlobs(), authenticate: await bearerAuth({ [key]: { id: "bot", kind: "agent_of_human" } }) });
     const headers = { authorization: `Bearer ${key}`, "content-type": "application/json" };
     const got = await app.request("/api/v1/sheets/old/range?range=A1:B3", { headers });

@@ -74,10 +74,16 @@ curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/
 | `PUT /:book/formula` | `formula` |
 | `POST /:book/rows` | `insert-rows` |
 | `GET /:book/export` and `POST /:book/import` | `export` (CSV) and `import` |
+| `PUT /:book/share` and `DELETE /:book/share/:subject` | Give a principal a role (`viewer`, `commenter`, `editor`), and take it back |
 
 The key sets who writes, so a body cannot name another principal. A key must have 32 bytes or more,
 and each needs an id and a kind. A missing or bad key gets 401. Errors are 400, 404, 409, or 413.
 A request body is at most 5 MB. `GET /health` needs no key.
+
+A workbook has an owner: the principal that made it. The owner shares it with a principal id and a role.
+A viewer or commenter reads. An editor reads and writes. Only the owner shares. `agentic-identity` keeps the
+roles and writes an audit entry for each check. A principal with no role gets 404, as for a book that does not
+exist. A principal with a role that is too low gets 403.
 
 ## Features
 
@@ -146,8 +152,9 @@ A request body is at most 5 MB. `GET /health` needs no key.
 - Two clients that add a sheet with the same name while offline both succeed.
   The merged workbook then holds two sheets with one name.
 - The Worker keeps workbooks in memory, in one isolate. A restart loses them, and two isolates do not
-  share them. Any caller with a valid key can read and write every workbook. There is no sharing,
-  no rate limit, and no audit log yet. The shared identity package is meant to replace this.
+  share them. A workbook stored before sharing has no owner,
+  and the Worker refuses it for every principal. `list` still names every workbook to every valid key.
+  There is no rate limit yet.
 - Storage uses the `Store` and `Blobs` ports of `agentic-identity`. A workbook is a document in the store
   and its state is a blob. The CLI keeps both in files under the store directory (`store.json` and
   `blobs/`). A write takes a lock file, and a lock from a dead process is taken over. A workbook saved by
