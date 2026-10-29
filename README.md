@@ -107,7 +107,7 @@ The root export, `agentic-spreadsheet`, also exports these names.
 - Stores. `createMemoryStore()` and `createMemoryBlobs()` keep data in memory, for tests. `createFileStore(dir)`
   and `createFileBlobs(dir)` keep data in files, as the CLI does. A store runs a transaction again when another
   writer changed what it read, and throws `StoreConflictError` when the transaction keeps losing.
-  `createFileStore` also throws it when it cannot get its file lock in time, for any write. Read the book,
+  `createFileStore` also throws it when the store file changes during a write. Read the book,
   then retry the write.
 - `ctxFromEnv(process.env)` builds the context that the CLI and the MCP server use. It reads `SHEET_DIR`,
   `SHEET_AS`, and `SHEET_KIND`.
