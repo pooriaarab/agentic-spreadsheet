@@ -18,6 +18,9 @@ import { column, exchange, fork, grid, race, snapshot } from "../testing/replica
 // - two copies that each convert an old workbook merge with no sign, though each made its own order
 //   for the sheets and the merge keeps one, so rows and edits are lost and two sheets can share an id
 // - a workbook that was converted once, saved, and then shared is flagged as a clash
+// - a sheet that is converted and a sheet that is added later get one id, so a formula reads the
+//   wrong sheet
+// - old state that arrives after the workbook is made is read as empty and then overwritten
 // - after a clash a read shows rows in the wrong place, as if the data were good
 
 const stampOf = (id: string, kind: string) => ({ id, kind, at: "2026-01-02T03:04:05.000Z" });
@@ -152,6 +155,27 @@ describe("a workbook saved with A1 keys", () => {
       const ids = (w.doc.getArray("sheets").toJSON() as { id: string; name: string }[]).map((sheet) => sheet.id);
       expect(new Set(ids).size).toBe(ids.length);
     }
+  });
+
+  test("a sheet added after 1,008 new ids does not share an id with a converted sheet", () => {
+    const wb = Workbook.fromState(legacyState());
+    wb.insertRows("Sheet1", 1, 1008);
+    wb.addSheet("New");
+    const ids = (wb.doc.getArray("sheets").toJSON() as { id: string }[]).map((sheet) => sheet.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    wb.writeRange("New", "A1", [[42]], { id: "u1", kind: "human" });
+    wb.writeRange("Sheet1", "H1", [["=New!A1"]], { id: "u1", kind: "human" });
+    expect(grid(wb, "H1:H1")).toEqual([["=New!A1"]]);
+    expect(new Engine(wb).value("Sheet1", "H1")).toBe(42);
+  });
+
+  test("old state that arrives after the workbook is made is refused, not read as empty", () => {
+    const wb = new Workbook(new Y.Doc());
+    Y.applyUpdate(wb.doc, legacyState());
+    expect(() => wb.readRange("Sheet1", "A1:A1")).toThrow(/old A1 form/);
+    expect(() => wb.writeRange("Sheet1", "A1", [["new"]], { id: "u1", kind: "human" })).toThrow(/old A1 form/);
+    expect(() => wb.sheetNames()).toThrow(/old A1 form/);
+    expect(grid(Workbook.fromState(wb.encode()), "A1:A1")).toEqual([[10]]);
   });
 
   test("a key already in the new form is kept", () => {
