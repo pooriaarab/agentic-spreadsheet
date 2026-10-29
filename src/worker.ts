@@ -135,16 +135,40 @@ const store = createMemoryStore();
 const blobs = createMemoryBlobs();
 let cached: { keys?: string; unsafe?: string; auth: Authenticator } | undefined;
 
+// The authenticator for this env. It throws ConfigError when the env sets no valid sign-in.
+async function authenticatorFor(env: WorkerEnv): Promise<Authenticator> {
+  let authenticate = cached?.keys === env.SHEETS_API_KEYS && cached?.unsafe === env.SHEETS_UNSAFE_TRUST_HEADERS ? cached?.auth : undefined;
+  try {
+    authenticate ??= await authFromEnv(env);
+    cached = { keys: env.SHEETS_API_KEYS, unsafe: env.SHEETS_UNSAFE_TRUST_HEADERS, auth: authenticate };
+    return authenticate;
+  } catch (error) {
+    cached = undefined;
+    throw error;
+  }
+}
+
+// Who may join the presence room of a book, and as what. A browser cannot set a header on a
+// WebSocket, so the key may also come in the `token` query parameter. The room carries presence only:
+// cells travel through the API. A principal with no read right on the book gets null.
+export async function roomGrant(request: Request, book: string, env: WorkerEnv) {
+  const headers = new Headers(request.headers);
+  const token = new URL(request.url).searchParams.get("token");
+  if (!headers.has("authorization") && token !== null) headers.set("authorization", `Bearer ${token}`);
+  const who = await (await authenticatorFor(env))(new Request(request.url, { headers }));
+  if (who === null) return null;
+  const { allowed, role } = await createAccess(store).role(who, "read", book);
+  return allowed && role !== null ? { principal: who, role, name: who.id } : null;
+}
+
 // Data lives in memory in one isolate. It is lost when the isolate restarts.
 export default {
   async fetch(request: Request, env: WorkerEnv): Promise<Response> {
-    let authenticate = cached?.keys === env.SHEETS_API_KEYS && cached?.unsafe === env.SHEETS_UNSAFE_TRUST_HEADERS ? cached?.auth : undefined;
+    let authenticate: Authenticator;
     try {
-      authenticate ??= await authFromEnv(env);
-      cached = { keys: env.SHEETS_API_KEYS, unsafe: env.SHEETS_UNSAFE_TRUST_HEADERS, auth: authenticate };
+      authenticate = await authenticatorFor(env);
     } catch (error) {
       if (!(error instanceof ConfigError)) throw error;
-      cached = undefined;
       return Response.json({ error: `the API cannot start: ${error.message}` }, { status: 500 });
     }
     return createApp({ store, blobs, authenticate, pack: env.PACK_NAME }).fetch(request);

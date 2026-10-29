@@ -176,7 +176,7 @@ describe("bearer keys", () => {
       ["PUT", `${API}/e/formula`, { ...as(KEY_A), body: { cell: "A1", formula: `=${"1+".repeat(5000)}1` } }, 400],
       ["PUT", `${API}/e/range`, { ...as(KEY_A), raw: JSON.stringify({ anchor: "A1", values: [["x".repeat(6 * 1024 * 1024)]] }) }, 413],
       ["DELETE", `${API}/e/range`, as(KEY_A), 404],
-      ["GET", "/elsewhere", {}, 404],
+      ["GET", "/api/elsewhere", {}, 404],
     ];
     for (const [method, path, init, status] of cases) {
       const res = await call("keys", method, path, init);

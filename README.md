@@ -125,6 +125,43 @@ Every kind but `human` counts as an agent.
 The owner cannot lower its own role. Each check adds an audit entry to the store, and nothing limits how many.
 If the Worker fails after it saves a new workbook and before it records the owner, the book has no owner.
 
+## UI
+
+A small web UI comes with the Worker. It uses the `agentic-design` package for tokens, controls, and
+dialogs, the typed client (`./client`) for every call, and a presence room from `agentic-realtime`.
+It has a list of workbooks, a sheet bar, a grid with A1 cells and a formula bar, edits for values
+and formulas, add and remove for rows, columns, and sheets, and light and dark themes.
+
+Run it from a checkout:
+
+```sh
+npm ci
+npm run build                      # builds the Worker and the UI into dist/
+echo 'SHEETS_API_KEYS={"a-key-of-at-least-32-bytes-0123456789":{"id":"ana","kind":"human"}}' > .dev.vars
+WRANGLER_SEND_METRICS=false npx wrangler dev
+```
+
+Open the address that Wrangler prints, and paste the key. The tab keeps the key until you close
+it. `.dev.vars` stays out of git. Data lives in memory, so a restart empties it.
+
+- **Keyboard.** Arrow keys move. Enter or F2 edits the cell. Typing on a cell replaces its text.
+  Enter saves and moves down. Tab saves and moves right while you edit. Escape cancels. Delete clears.
+  Outside an edit, Tab walks to the next cell and leaves the grid at the last cell, so focus is never trapped.
+- **Agent marker.** A cell an agent wrote has a robot mark and a left bar, and its name says who wrote it.
+  Color is never the only sign.
+- **Presence.** Each workbook has a room. The room shows who has the workbook open, and which cell
+  each person selects. Cells do not travel through the room: the API stores them, and the grid
+  reads again every 4 seconds. Two people who edit one cell at once get the last write.
+- **Tests.** `npm run test:e2e` runs Playwright against `wrangler dev`. It signs in, makes a sheet,
+  enters a value and a formula, checks the result and a reload, checks the keys, the structure
+  changes, the agent marker, and presence, and runs an axe WCAG 2.2 AA check on each view in light and dark.
+  Screenshots of each view in both themes are in [`docs/screenshots`](docs/screenshots).
+  Run `UPDATE_SCREENSHOTS=1 npm run test:e2e` to make them again.
+- **Limits.** The grid shows the used range plus some room, up to 52 columns and 200 rows. The browser
+  sends the key as a `token` query parameter when it joins a room, because a browser cannot set a header on a
+  WebSocket. Use HTTPS, and keep Worker logs private. There is no sign-in page for a person
+  yet: the key is the sign-in.
+
 ## Features
 
 - A workbook is one Yjs document. Two copies merge. Content, each format field, and the editor stamp

@@ -7,6 +7,9 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
+- A web UI, served by the Worker: workbook list, grid with a formula bar, edits, structure changes, presence,
+  and an agent marker. It runs on `agentic-design`, the typed client, and `agentic-realtime`. See the README, "UI".
+- Playwright end-to-end tests against `wrangler dev`, with an axe WCAG 2.2 AA check in light and dark.
 - Operations `delete-rows`, `insert-cols`, `delete-cols`, `sheets`, `add-sheet`, and `delete-sheet`. Each has a
   CLI command, an MCP tool, an HTTP route, and a client method.
 
