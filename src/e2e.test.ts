@@ -83,8 +83,9 @@ describe("cli", () => {
 
   test("list pages through books in name order", () => {
     for (const name of ["c", "a", "b"]) cli("new", name);
-    expect(cli("list", "--limit", "2").json()).toEqual({ books: ["a", "b"], cursor: "b" });
-    expect(cli("list", "--limit", "2", "--cursor", "b").json()).toEqual({ books: ["c"] });
+    const first = cli("list", "--limit", "2").json();
+    expect(first).toEqual({ books: ["a", "b"], cursor: expect.any(String) });
+    expect(cli("list", "--limit", "2", "--cursor", first.cursor).json()).toEqual({ books: ["c"] });
   });
 
   test.each([

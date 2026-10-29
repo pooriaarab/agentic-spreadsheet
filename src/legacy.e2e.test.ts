@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,9 +8,9 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import * as Y from "yjs";
 import { bearerAuth } from "./auth.js";
-import { FileStore } from "./core/file-store.js";
+import { createFileBlobs, createFileStore } from "./core/file-store.js";
 import { fromBase64, toBase64 } from "./core/bytes.js";
-import { MemoryStore } from "./core/store.js";
+import { createMemoryBlobs, createMemoryStore } from "agentic-identity";
 import { createApp } from "./worker.js";
 import { legacyState } from "./testing/legacy.js";
 
@@ -27,8 +27,14 @@ let dir: string;
 beforeEach(() => void (dir = mkdtempSync(join(tmpdir(), "sheet-legacy-"))));
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
+const doc = (id: string, state: Uint8Array) => ({ name: id, state: toBase64(state), updatedAt: "2026-01-01T00:00:00.000Z" });
 const put = (store: { put(c: string, id: string, doc: Record<string, unknown>): Promise<void> }, id: string, state: Uint8Array) =>
-  store.put("workbooks", id, { name: id, state: toBase64(state), updatedAt: "2026-01-01T00:00:00.000Z" });
+  store.put("workbooks", id, doc(id, state));
+// Version 0.1.0 wrote one file per workbook, with the state inside it.
+function putFile(id: string, state: Uint8Array) {
+  mkdirSync(join(dir, "workbooks"), { recursive: true });
+  writeFileSync(join(dir, "workbooks", `${id}.json`), JSON.stringify(doc(id, state)));
+}
 
 function cli(...args: string[]) {
   const env = { ...process.env, SHEET_DIR: dir, SHEET_AS: "cli", SHEET_KIND: "agent" } as Record<string, string>;
@@ -37,24 +43,26 @@ function cli(...args: string[]) {
 }
 
 // The sheets as they sit in the stored file.
-function stored(id: string): { id?: string; cells: Record<string, unknown> }[] {
-  const file = JSON.parse(readFileSync(join(dir, "workbooks", `${id}.json`), "utf8")) as { state: string };
+async function stored(id: string): Promise<{ id?: string; cells: Record<string, unknown> }[]> {
+  const saved = await createFileStore(dir).get("workbooks", id);
+  const state = typeof saved?.state === "string" ? fromBase64(saved.state) : (await createFileBlobs(join(dir, "blobs")).get(saved?.blob as string))!.data;
   const doc = new Y.Doc();
-  Y.applyUpdate(doc, fromBase64(file.state));
+  Y.applyUpdate(doc, state);
   return doc.getArray("sheets").toJSON();
 }
 
 describe("a stored old workbook", () => {
   test("the CLI reads it, a read saves nothing, and the first write saves the converted form", async () => {
-    await put(new FileStore(dir), "old", legacyState());
+    putFile("old", legacyState());
     const read = cli("read", "old", "A1:B3").json();
     expect(read.values).toEqual([[10, 35], [20, "200A1"], ["text", null]]);
     expect(read.formulas).toEqual([[null, "=SUM(A1:A3)+'Q 3'!B2"], [null, '=$A$1*A2&"A1"'], [null, null]]);
     expect(read.authors[1][0]).toMatchObject({ id: "a1", kind: "agent_of_human", machine: true });
-    expect(stored("old").every((sheet) => sheet.id === undefined)).toBe(true);
+    expect(existsSync(join(dir, "store.json"))).toBe(false);
+    expect((await stored("old")).every((sheet) => sheet.id === undefined)).toBe(true);
     expect(cli("export", "old").out.split("\r\n")[0]).toBe("10,35,,");
     expect(cli("insert-rows", "old", "2").code).toBe(0);
-    expect(stored("old").every((sheet) => typeof sheet.id === "string")).toBe(true);
+    expect((await stored("old")).every((sheet) => typeof sheet.id === "string")).toBe(true);
     const after = cli("read", "old", "A1:B4").json();
     expect(after.values).toEqual([[10, 35], [null, null], [20, "200A1"], ["text", null]]);
     expect(after.formulas[2][1]).toBe('=$A$1*A3&"A1"');
@@ -62,7 +70,7 @@ describe("a stored old workbook", () => {
   });
 
   test("the MCP server and the Worker app give the same answers as the CLI", async () => {
-    await put(new FileStore(dir), "old", legacyState());
+    putFile("old", legacyState());
     const expected = cli("read", "old", "A1:B3").json();
     const client = new Client({ name: "test", version: "0" });
     await client.connect(new StdioClientTransport({ command: process.execPath, args: [CLI, "mcp"], env: { SHEET_DIR: dir, SHEET_AS: "bot", SHEET_KIND: "agent" } }));
@@ -73,9 +81,9 @@ describe("a stored old workbook", () => {
       await client.close();
     }
     const key = "agent-key-0123456789-0123456789-abcdef";
-    const store = new MemoryStore();
+    const store = createMemoryStore();
     await put(store, "old", legacyState());
-    const app = createApp({ store, authenticate: await bearerAuth({ [key]: { id: "bot", kind: "agent_of_human" } }) });
+    const app = createApp({ store, blobs: createMemoryBlobs(), authenticate: await bearerAuth({ [key]: { id: "bot", kind: "agent_of_human" } }) });
     const headers = { authorization: `Bearer ${key}`, "content-type": "application/json" };
     const got = await app.request("/api/v1/sheets/old/range?range=A1:B3", { headers });
     expect(await got.json()).toEqual(expected);
@@ -85,7 +93,7 @@ describe("a stored old workbook", () => {
   });
 
   test("a workbook with an unaccepted old fork is an error, not good data", async () => {
-    await put(new FileStore(dir), "forked", legacyState([{ id: "a", parent: null }, { id: "b", parent: null }]));
+    putFile("forked", legacyState([{ id: "a", parent: null }, { id: "b", parent: null }]));
     const r = cli("read", "forked", "A1:B3");
     expect([r.code, r.out]).toEqual([1, ""]);
     expect(r.err).toMatch(/^error: .*at the same time and not accepted/);

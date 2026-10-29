@@ -2,6 +2,8 @@
   "name": "agentic-spreadsheet",
   "main": "src/worker.ts",
   "compatibility_date": "2026-01-01",
+  // The root of agentic-identity imports node:module for its version string.
+  "compatibility_flags": ["nodejs_compat"],
   "vars": {
     "PACK_NAME": "agentic-spreadsheet"
   }
