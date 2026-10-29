@@ -10,9 +10,9 @@ Spreadsheets with formulas that people and agents edit together.
 > Status: early. The workbook model, formula engine, CLI, and MCP server work. The package is on npm.
 > The HTTP API keeps data in D1 and R2. Keys are read through the `Auth` port of `agentic-identity`.
 >
-> Warning: the HTTP API (the Worker) refuses to serve until you set `SHEETS_API_KEYS`, or set
-> `SHEETS_UNSAFE_TRUST_HEADERS=1`. That second setting trusts any caller who sets two headers.
-> Use it for tests only. See [HTTP API](#http-api).
+> Warning: the HTTP API (the Worker) signs callers in with the `agentic-identity` store. With no setting,
+> only a key that `agentic-identity` issued works. `SHEETS_UNSAFE_TRUST_HEADERS=1` trusts any caller who
+> sets two headers. Use it for tests only. See [HTTP API](#http-api).
 >
 > Warning: the Worker also refuses to serve until `SHEETS_REGION` says where the data lives (`eu` or `us`).
 > Under `wrangler dev`, set `SHEETS_REGION=unknown` and `SHEETS_UNSAFE_REGION=1`.
@@ -212,8 +212,8 @@ curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/
 | `DELETE /:book` | The owner deletes the workbook, and its grants, invites, links, and audit entries go with it |
 
 The key sets who writes, so a body cannot name another principal. The Worker reads each request through the
-`Auth` port of `agentic-identity`. On start, it writes the keys of `SHEETS_API_KEYS` into the store as principals
-and credentials. The store holds the hash of a key, never the key. A key has 32 bytes or more, with only letters,
+`Auth` port of `agentic-identity`, so a key that `agentic-identity` issued works with no setting. `SHEETS_API_KEYS`
+is optional. If you set it, the Worker writes its keys into the store on start as principals and credentials. The store holds the hash of a key, never the key. A key has 32 bytes or more, with only letters,
 digits, `_` and `-`, at most 512 characters, and each needs an id and a kind. A kind that acts for another principal
 (`agent_of_human`, `agent_of_agent`, `user_token`) needs a `parent`, the id of another entry. `human` and `agent`
 take no parent. An entry can also set `scopes`, such as `["workbook:read"]`: the key then cannot write, whatever its
@@ -257,7 +257,15 @@ const app = createApp({
 export default app; // a Hono app: app.fetch(request) answers the routes above
 ```
 
-The app runs the same operations as the table above, under `/api/v1/sheets`. It limits each request body to 5 MB and sets `Cache-Control: no-store`. It reads no key or setting of its own, so the host decides who signs in. The example needs `agentic-identity` in your own `package.json`. The default export of `agentic-spreadsheet/worker` builds this app from the `DB` and `BLOBS` bindings and these settings: `SHEETS_REGION`, `SHEETS_UNSAFE_REGION`, `SHEETS_API_KEYS`, and `SHEETS_UNSAFE_TRUST_HEADERS`. `PACK_NAME` sets `pack`.
+The app runs the same operations as the table above, under `/api/v1/sheets`. It limits each request body to 5 MB and sets `Cache-Control: no-store`. It reads no key or setting of its own, so the host decides who signs in. The example needs `agentic-identity` in your own `package.json`. The default export of `agentic-spreadsheet/worker` builds this app from the `DB` and `BLOBS` bindings and these settings: `SHEETS_REGION`, `SHEETS_UNSAFE_REGION`, `SHEETS_API_KEYS` (optional seed), and `SHEETS_UNSAFE_TRUST_HEADERS`.
+
+| Setting | Meaning |
+|---|---|
+| `SHEETS_REGION` | `eu` or `us`: where the data lives. Required |
+| `SHEETS_UNSAFE_REGION` | `1` lets `SHEETS_REGION=unknown` run (local only) |
+| `SHEETS_API_KEYS` | Optional. JSON of keys to seed into the identity store. Not needed for identity-issued keys. If you remove it, the keys it seeded stop working |
+| `SHEETS_UNSAFE_TRUST_HEADERS` | `1` trusts the `x-principal-*` headers. Tests only. Not with `SHEETS_API_KEYS`. Any other value is an error |
+| `PACK_NAME` | Sets `pack` |
 
 ## Mount the sheet in your page
 
@@ -374,7 +382,7 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
   A host must serve them at the root of an origin, because the asset paths start at `/`, and the UI calls
   the API on its own origin.
   The host answers every path under `/api/v1/sheets/`, and `/health`, with the default export of
-  `agentic-spreadsheet/worker`. Pass an `env` with `SHEETS_API_KEYS`, `SHEETS_REGION`, and the `DB` and `BLOBS` bindings, or the Worker answers 500.
+  `agentic-spreadsheet/worker`. Pass an `env` with `SHEETS_REGION`, and the `DB` and `BLOBS` bindings, or the Worker answers 500.
   Presence does not work this way yet. Its socket needs `agentic-realtime` and a `SyncRoom` Durable Object,
   and `roomGrant` needs the same `DB` binding. For presence, run the Worker from
   a checkout, as `src/ui-worker.ts` does. Without presence, the UI still works and shows Offline.

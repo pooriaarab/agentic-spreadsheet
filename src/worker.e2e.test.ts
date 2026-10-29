@@ -8,7 +8,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 
 // These tests start the real Worker with `wrangler dev` and call it over HTTP.
 // Failure modes, listed before the code:
-// - the Worker serves with no auth set, with both modes set, with a key under 32 bytes, with a key
+// - the Worker serves with both modes set, with a key under 32 bytes, with a key
 //   that has no kind or a bad kind, or with bad JSON in SHEETS_API_KEYS
 // - a missing, wrong, or near-miss token gets in, or an error echoes the token
 // - in header mode a missing or bad kind gets in, or an agent edit is not labeled machine-made
@@ -119,9 +119,16 @@ async function call(server: string, method: string, path: string, init: { header
 const API = "/api/v1/sheets";
 const as = (key: string) => ({ headers: auth(key) });
 
+describe("the identity store alone", () => {
+  test("starts with no SHEETS_API_KEYS and answers 401 to an unknown key and to forged headers", async () => {
+    expect((await call("none", "GET", "/health")).status).toBe(200);
+    expect((await call("none", "GET", `${API}/b/range?range=A1`, as(KEY_A))).status).toBe(401);
+    expect((await call("none", "GET", `${API}/b/range?range=A1`, { headers: { "x-principal-id": "x", "x-principal-kind": "human" } })).status).toBe(401);
+  });
+});
+
 describe("refuses to start without safe auth", () => {
   test.each([
-    ["none", /no auth is set.*SHEETS_API_KEYS.*SHEETS_UNSAFE_TRUST_HEADERS/],
     ["both", /not both/],
     ["short", /32 to 512 bytes/],
     ["dashkey", /letters, digits/],
