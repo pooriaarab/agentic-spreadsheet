@@ -5,7 +5,7 @@
 //  4. A restart loses a saved edit.
 //  5. A failed blob delete in removeWorkbook looks like success, or leaves a workbook that a second
 //     call cannot remove.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryBlobs, createMemoryStore, type Blobs, type Store } from "agentic-identity";
@@ -74,6 +74,17 @@ describe("workbooks on shared ports", () => {
     await expect(createFileStore(dir).query("workbooks")).rejects.toThrow(/__x__\.json" has an id.*Rename/);
     const accepts = (book: string) => z.object(OPS.find((o) => o.name === "new")!.shape).safeParse({ book }).success;
     expect([accepts("__y__"), accepts("a".repeat(257)), accepts("_y_"), accepts("a".repeat(256))]).toEqual([false, false, true, true]);
+  });
+
+  test("a store.json from an earlier version is moved to the identity format on first use", async () => {
+    const dir = fresh();
+    writeFileSync(join(dir, "store.json"), JSON.stringify({ clock: 2, tables: { workbooks: { a: { v: 1, doc: { name: "a" } }, b: { v: 2, doc: { name: "b" } } } } }));
+    const store = createFileStore(dir);
+    expect(await store.get("workbooks", "a")).toEqual({ name: "a" });
+    await store.put("workbooks", "c", { name: "c" });
+    expect((await createFileStore(dir).query("workbooks")).items.map((i) => i.id)).toEqual(["a", "b", "c"]);
+    expect(JSON.parse(readFileSync(join(dir, "store.json"), "utf8")).format).toBeDefined();
+    expect(readdirSync(dir).filter((n) => n.includes("moving"))).toEqual([]);
   });
 
   test("a read creates no directory", async () => {
