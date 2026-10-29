@@ -64,7 +64,7 @@
   "dependencies": {
     "@formulajs/formulajs": "^4.6.1",
     "@modelcontextprotocol/sdk": "^1.12.0",
-    "agentic-identity": "^0.4.0",
+    "agentic-identity": "^0.5.0",
     "hono": "^4.13.14",
     "yjs": "^13.6.0",
     "zod": "^3.25.0"
@@ -76,8 +76,8 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
-    "agentic-design": "^0.1.0",
-    "agentic-realtime": "^0.2.0",
+    "agentic-design": "^0.2.0",
+    "agentic-realtime": "^0.3.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tsup": "^8.0.0",

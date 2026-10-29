@@ -14,6 +14,7 @@ All notable changes to this project are listed here. The format follows
 ### Changed
 
 - Data survives a Worker restart. The in-memory store stays in the SDK for tests.
+- `agentic-identity` is now 0.5.0, `agentic-design` 0.2.0, and `agentic-realtime` 0.3.0.
 
 ## [0.5.0] - 2026-10-29
 
