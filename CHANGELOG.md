@@ -30,6 +30,10 @@ All notable changes to this project are listed here. The format follows
 - `agentic-spreadsheet mcp --help` and `mcp --version` print their text and exit with 0. Before, both started the
   server and waited on stdin.
 
+### Documentation
+
+- The README no longer says that ODS and XLSX import and export are not built yet.
+
 ## [0.7.1] - 2026-10-29
 
 ### Changed
