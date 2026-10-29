@@ -260,7 +260,7 @@ sheet.update({ client, docId: "forecast", principal: { kind: "human", name: "Ada
 sheet.unmount(); // remove the sheet and stop its polling
 ```
 
-- `principal` needs a known `kind` and a `name`. A missing or unknown kind throws a `TypeError`, and so does
+- `principal` needs a known `kind` and a `name`. With `host` it also needs an `id`. A missing or unknown kind throws a `TypeError`, and so does
   a bad `client` or an empty `docId`. The kind is only checked. It does not change what the server allows:
   the server checks every write against the key of the client. The name shows in the presence room.
 - `readOnly` turns off cell edits, the formula bar, and the row, column, and sheet buttons.
@@ -283,7 +283,7 @@ and `token` together with `host` throws a `TypeError`.
 const sheet = mount(element, {
   docId: "budget",
   title: "Budget",
-  principal: { kind: "human", name: "Ada", id: "ada" }, // id is stamped on each cell Ada writes; the default is name
+  principal: { kind: "human", name: "Ada", id: "ada" }, // id is required with host: it is stamped on each cell Ada writes
   host: {
     doc, // a Y.Doc
     presence: sync, // optional: a SyncClient of agentic-realtime, or { peers, onPeers, setPresence }
@@ -297,7 +297,11 @@ const sheet = mount(element, {
 - Each cell the sheet writes is stamped with the principal's `id` and `kind`. A cell from an agent kind is machine-made
   and shows the agent mark. The server does not check these writes: your app and its room decide who may write.
 - With `presence`, the sheet shows the peers and their cells, and sends its own cursor with `setPresence`. On
-  `unmount` it clears its cursor. It never closes your room or your document.
+  `unmount` it clears its cursor. It never closes your room or your document. Keep the same `presence` object between
+  renders: a new one makes the sheet join again, and peers see its cursor blink.
+- While a cell edit is open, the sheet waits to read the document again, so the edit stays on its sheet and cell. If a
+  peer renamed or deleted that sheet, the save fails with a message.
+- A document that the sheet cannot read as a workbook shows "Could not open the sheet" in place of the grid.
 - A workbook with no sheet shows "This workbook has no sheet yet." Your app adds the first sheet.
 - The sheet opens the document again only when `doc` changes. It reads `onStatus` once each time.
 

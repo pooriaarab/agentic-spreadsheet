@@ -102,13 +102,42 @@ describe("mount with a host document", () => {
     await vi.waitFor(() => expect(cell("1,2").textContent).toBe("18"));
   });
 
-  it("an agent principal's cells are marked as machine-made, and its id defaults to its name", async () => {
+  it("an agent principal's cells are marked as machine-made", async () => {
     const { doc, book } = hostDoc();
-    await show({ host: { doc }, principal: { kind: "agent_of_human", name: "Scribe" } });
+    await show({ host: { doc }, principal: { kind: "agent_of_human", name: "Scribe", id: "bot-1" } });
     await ready();
     await typeInto("2,1", "5");
-    expect(book.readRange("Sheet1", "A2")[0][0]).toMatchObject({ value: 5, author: { id: "Scribe", kind: "agent_of_human", machine: true } });
-    await vi.waitFor(() => expect(cell("2,1").getAttribute("aria-label")).toContain("written by agent Scribe"));
+    expect(book.readRange("Sheet1", "A2")[0][0]).toMatchObject({ value: 5, author: { id: "bot-1", kind: "agent_of_human", machine: true } });
+    await vi.waitFor(() => expect(cell("2,1").getAttribute("aria-label")).toContain("written by agent bot-1"));
+  });
+
+  it("an open edit is not moved to another sheet when a peer renames the sheet it is on", async () => {
+    const { doc, book } = hostDoc();
+    book.addSheet("Q2");
+    const peer = new Y.Doc();
+    Y.applyUpdate(peer, Y.encodeStateAsUpdate(doc));
+    peer.on("update", (update: Uint8Array) => Y.applyUpdate(doc, update));
+    await show({ host: { doc } });
+    await ready();
+    await act(async () => button("Q2").click());
+    await vi.waitFor(() => expect(element.querySelector('[aria-current="true"]')?.textContent).toBe("Q2"));
+    await act(async () => cell("1,1").focus());
+    await act(async () => void cell("1,1").dispatchEvent(new KeyboardEvent("keydown", { key: "5", bubbles: true })));
+    const other = new Workbook(peer);
+    await act(async () => other.renameSheet("Q2", "Q2 final"));
+    other.dispose();
+    const editor = element.querySelector<HTMLInputElement>("input.as-editor")!;
+    await act(async () => void editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
+    expect(book.readRange("Sheet1", "A1")[0][0].value).toBe(7);
+    expect(book.readRange("Q2 final", "A1")[0][0].value).toBe(null);
+    await vi.waitFor(() => expect(document.body.textContent).toContain("Could not save A1"));
+  });
+
+  it("a workbook that cannot open shows an error in the sheet, not a broken page", async () => {
+    const doc = new Y.Doc();
+    doc.getArray("sheets").push(["not a sheet"] as never);
+    await show({ host: { doc } });
+    await vi.waitFor(() => expect(element.querySelector('[role="alert"]')?.textContent).toContain("Could not open the sheet"));
   });
 
   it("redraws at once when the host's document changes elsewhere, with no polling", async () => {
@@ -222,10 +251,10 @@ describe("mount with a host document", () => {
     await vi.waitFor(() => expect(cell("1,1").textContent).toBe("moved"));
   });
 
-  it("refuses a host with a token, a host with no Yjs document, a bad presence, and no host with no client", () => {
+  it("refuses a host with a token, a host principal with no id, a host with no Yjs document, a bad presence, and no host with no client", () => {
     element = document.createElement("div");
     const { doc } = hostDoc();
-    const bad: object[] = [{ host: { doc }, token: "key" }, { host: {} }, { host: { doc: { getArray: () => null } } }, { host: { doc, presence: { peers: [] } } }, {}];
+    const bad: object[] = [{ host: { doc }, token: "key" }, { host: { doc }, principal: { kind: "human", name: "Ada" } }, { host: {} }, { host: { doc: { getArray: () => null } } }, { host: { doc, presence: { peers: [] } } }, {}];
     for (const options of bad) expect(() => mount(element, { docId: "b", principal: ada, ...options } as never)).toThrow(TypeError);
     expect(element.childElementCount).toBe(0);
   });

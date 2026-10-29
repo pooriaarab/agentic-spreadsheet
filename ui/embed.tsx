@@ -7,6 +7,8 @@ import { ToastProvider, TooltipProvider } from "agentic-design/react";
 import type { PrincipalKind, SheetsClient } from "../src/client.js";
 import { Engine } from "../src/core/engine.js";
 import { Workbook } from "../src/core/workbook.js";
+import type * as Y from "yjs";
+import { errorText } from "./session.js";
 import { checkHost, workbookCalls, type HostWorkbook, type RoomPresence, type SheetCalls } from "./host.js";
 import { SheetView } from "./SheetView.js";
 
@@ -19,7 +21,7 @@ export interface EmbedPrincipal {
   /** Checked only. It does not change what the server allows. */
   kind: PrincipalKind;
   name: string;
-  /** The id stamped on each cell this principal writes in a host workbook. The default is `name`. */
+  /** The id stamped on each cell this principal writes in a host workbook. Required with `host`. */
   id?: string;
 }
 
@@ -50,6 +52,7 @@ function checkOptions(options: MountOptions): void {
   if (host !== undefined) {
     checkHost(host);
     if (options.token !== undefined) throw new TypeError("the sheet takes a token or a host workbook, not both");
+    if (options.principal?.id === undefined) throw new TypeError("with a host workbook, the principal needs an id to stamp on its cells");
   } else if (typeof client?.sheets !== "function" || typeof client.read !== "function") {
     throw new TypeError("the sheet needs a client from createClient, or a host workbook");
   }
@@ -76,10 +79,16 @@ export function WorkbookView(options: MountOptions) {
 
 /** The sheet on a workbook the app keeps. The workbook and its engine live while the document does not change. */
 function HostedSheet({ host, docId, principal, readOnly, title }: { host: HostWorkbook; docId: string; principal: EmbedPrincipal; readOnly: boolean; title?: string }) {
-  const [open, setOpen] = useState<{ book: Workbook; engine: Engine } | null>(null);
+  const [open, setOpen] = useState<{ book: Workbook; engine: Engine } | { failed: unknown; doc: Y.Doc } | null>(null);
   // Made and disposed in one effect, so a second mount (StrictMode) gets a live pair, and none stays on the host's document.
   useEffect(() => {
-    const book = new Workbook(host.doc);
+    let book: Workbook;
+    try {
+      book = new Workbook(host.doc); // it throws on a document it cannot read
+    } catch (failed) {
+      setOpen({ failed, doc: host.doc });
+      return;
+    }
     const engine = new Engine(book);
     setOpen({ book, engine });
     return () => {
@@ -87,8 +96,10 @@ function HostedSheet({ host, docId, principal, readOnly, title }: { host: HostWo
       book.dispose();
     };
   }, [host.doc]);
-  const { kind, name, id = name } = principal;
-  const calls = useMemo(() => open && workbookCalls(open.book, open.engine, { id, kind }), [open, id, kind]);
+  const { kind, name } = principal;
+  const id = principal.id!; // checkOptions makes sure a host principal has one
+  const ready = open && "book" in open ? open : null;
+  const calls = useMemo(() => ready && workbookCalls(ready.book, ready.engine, { id, kind }), [ready, id, kind]);
   const doc = host.doc;
   const changes = useMemo(() => (listener: () => void) => (doc.on("update", listener), () => doc.off("update", listener)), [doc]);
   // The app may make the host object on each render. The connection is read once each time the document changes.
@@ -99,7 +110,14 @@ function HostedSheet({ host, docId, principal, readOnly, title }: { host: HostWo
     () => (hasStatus ? { status: () => latest.current.status!(), onStatus: (listener: Parameters<NonNullable<HostWorkbook["onStatus"]>>[0]) => latest.current.onStatus?.(listener) ?? noop } : undefined),
     [doc, hasStatus],
   );
-  if (!calls || open?.book.doc !== doc) return <p role="status" className="as-muted">Loading sheet…</p>;
+  if (open && "failed" in open && open.doc === host.doc) {
+    return (
+      <div role="alert" className="as-sheet as-banner">
+        <p>Could not open the sheet: {errorText(open.failed)}</p>
+      </div>
+    );
+  }
+  if (!calls || ready?.book.doc !== doc) return <p role="status" className="as-muted">Loading sheet…</p>;
   return <SheetView key={docId} client={calls} book={docId} title={title} changes={changes} presence={host.presence} connection={connection} name={name} readOnly={readOnly} onUnauthorized={noop} />;
 }
 

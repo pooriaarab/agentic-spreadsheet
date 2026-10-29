@@ -126,10 +126,26 @@ export function SheetView({ client, book, title, changes, presence, connection, 
     return () => clearInterval(timer);
   }, [editing, load, active, changes]);
 
-  // A workbook in this tab says when it changed. Read it again then, even while an edit is open: the draft is kept.
+  // A workbook in this tab says when it changed. Read it again then. While an edit is open the read waits, as the poll
+  // does, so the sheet and the cell of the edit stay put. A sheet that a peer renamed or deleted then fails the save.
   const activeRef = useRef(active);
   activeRef.current = active;
-  useEffect(() => changes?.(() => void load(activeRef.current, true)), [changes, load]);
+  const editingRef = useRef(editing);
+  editingRef.current = editing;
+  const stale = useRef(false);
+  useEffect(
+    () =>
+      changes?.(() => {
+        if (editingRef.current) stale.current = true;
+        else void load(activeRef.current, true);
+      }),
+    [changes, load],
+  );
+  useEffect(() => {
+    if (editing || !stale.current) return;
+    stale.current = false;
+    void load(active, true);
+  }, [editing, load, active]);
 
   useEffect(() => {
     if (!refocus.current || editing) return;

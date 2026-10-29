@@ -9,8 +9,8 @@ All notable changes to this project are listed here. The format follows
 
 - `agentic-spreadsheet/ui`: a `host` option for `mount` and `WorkbookView`. The app gives its own `Y.Doc`, and optionally
   the presence and the status of its room. The sheet reads and writes that document, computes values in the page, and
-  does not call a client, poll, or open a presence room. `client` is optional with `host`. New options `title` and
-  `principal.id`.
+  does not call a client, poll, or open a presence room. `client` is optional with `host`, and `principal.id` is
+  required with it. New option `title`.
 - `Workbook.dispose()` stops a workbook from watching its document.
 
 ## [0.9.0] - 2026-10-29

@@ -25,6 +25,9 @@ const cell = (page: Page, addr: string) => page.locator(`td[data-pos="${pos(addr
 
 // The host page is built from e2e/host/main.ts with the built `agentic-spreadsheet/ui`, and served on the Worker's origin.
 // The embed styles leave the page alone, so the host page sets its own background from the design tokens.
+// Each test drives two or three browser pages, so it gets more time than the default on a busy machine.
+test.describe.configure({ timeout: 120_000 });
+
 let script = "";
 let styles = "";
 test.beforeAll(async () => {
@@ -33,8 +36,14 @@ test.beforeAll(async () => {
   styles = (await build({ entryPoints: ["dist/embed.css"], bundle: true, write: false, loader: { ".woff2": "dataurl" }, logLevel: "warning" })).outputFiles[0].text;
 });
 
+// Every API call a host page makes, from its first load on. The sheet must make none.
+const apiCalls = new WeakMap<Page, string[]>();
+
 async function host(browser: Browser, key: string, book: string, who: Record<string, string>, theme: "light" | "dark" = "light"): Promise<Page> {
   const page = await (await browser.newContext()).newPage();
+  const calls: string[] = [];
+  apiCalls.set(page, calls);
+  page.on("request", (request) => request.url().includes("/api/v1/sheets") && calls.push(request.url()));
   await page.route("**/e2e-host/**", (route) =>
     new URL(route.request().url()).pathname.endsWith(".js") ? route.fulfill({ contentType: "text/javascript", body: script }) : route.fulfill({ contentType: "text/css", body: styles }),
   );
@@ -60,9 +69,6 @@ test("two host apps share one workbook through their own room, see each other, a
   await api(ANA).share({ book, kind: "human", subject: "ben", role: "editor" });
   const ana = await host(browser, ANA, book, { kind: "human", name: "Ana", id: "ana", seed: "1" });
   const ben = await host(browser, BEN, book, { kind: "human", name: "Ben", id: "ben" });
-  // The sheet makes no API call with a host document: no poll, no read, no write.
-  const calls: string[] = [];
-  for (const page of [ana, ben]) page.on("request", (request) => request.url().includes("/api/v1/sheets") && calls.push(request.url()));
 
   await expect(ana.getByRole("heading", { name: "Budget", level: 1 })).toBeVisible();
   await expect(ana.getByText("Live")).toBeVisible();
@@ -74,7 +80,8 @@ test("two host apps share one workbook through their own room, see each other, a
   await cell(ben, "C3").click();
   await expect(cell(ana, "C3")).toHaveAttribute("aria-label", /also here/);
   await new Promise((r) => setTimeout(r, 4500)); // longer than the poll of a sheet on a client
-  expect(calls).toEqual([]);
+  // The sheet makes no API call with a host document: no first read, no poll, no write.
+  expect([...apiCalls.get(ana)!, ...apiCalls.get(ben)!]).toEqual([]);
 
   // The sheet goes. The host's room stays connected, and its document still gets Ana's edits.
   await ben.evaluate(() => (window as unknown as { unmountSheet: () => void }).unmountSheet());
