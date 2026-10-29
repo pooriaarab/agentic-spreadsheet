@@ -142,7 +142,24 @@ export class Workbook {
     const all = this.sheets.toArray();
     const legacy = all.filter((sheet) => !sheet.has("id"));
     if (legacy.length === 0) return;
+    this.checkLegacyLog();
     this.convert(all, legacy);
+  }
+
+  // The old version kept a log of its row, column, and sheet-name edits. Two edits made at the same
+  // time showed as a fork in it, and the old version refused writes until someone accepted the merge.
+  // Cells in a fork may sit at the wrong address, and the conversion cannot tell, so it stops.
+  private checkLegacyLog(): void {
+    const log = this.doc.getArray<{ id?: unknown; parent?: unknown; accepted?: unknown } | null>("structure").toArray();
+    let from = 0;
+    log.forEach((entry, i) => entry?.accepted && (from = i + 1));
+    for (let i = from; i < log.length; i += 1) {
+      if (log[i]?.parent !== (i === 0 ? null : log[i - 1]?.id)) {
+        throw new SheetError(
+          "this old workbook had row, column, or sheet-name edits made at the same time and not accepted; its cells may sit at the wrong address; accept the merge in the version that saved it, then load it again",
+        );
+      }
+    }
   }
 
   private convert(all: YSheet[], legacy: YSheet[]): void {

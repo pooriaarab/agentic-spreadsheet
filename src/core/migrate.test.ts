@@ -2,6 +2,7 @@ import { describe, expect, test } from "vitest";
 import * as Y from "yjs";
 import { Engine } from "./engine.js";
 import { Workbook } from "./workbook.js";
+import { legacyState, stampOf } from "../testing/legacy.js";
 import { column, exchange, fork, grid, race, snapshot } from "../testing/replicas.js";
 
 // Failure modes, listed before the code. The fixture is built by hand, key for key, the way the
@@ -22,45 +23,8 @@ import { column, exchange, fork, grid, race, snapshot } from "../testing/replica
 //   wrong sheet
 // - old state that arrives after the workbook is made is read as empty and then overwritten
 // - after a clash a read shows rows in the wrong place, as if the data were good
-
-const stampOf = (id: string, kind: string) => ({ id, kind, at: "2026-01-02T03:04:05.000Z" });
-
-function legacyState(): Uint8Array {
-  const doc = new Y.Doc();
-  const sheets = doc.getArray<Y.Map<unknown>>("sheets");
-  const make = (name: string, cells: Record<string, unknown>, widths: Record<string, number>, frozenRows: number) => {
-    const sheet = new Y.Map<unknown>();
-    sheet.set("name", name);
-    const map = new Y.Map<unknown>();
-    for (const [key, value] of Object.entries(cells)) map.set(key, value);
-    sheet.set("cells", map);
-    const w = new Y.Map<number>();
-    for (const [letters, width] of Object.entries(widths)) w.set(letters, width);
-    sheet.set("widths", w);
-    sheet.set("frozenRows", frozenRows);
-    sheets.push([sheet]);
-  };
-  const human = stampOf("u1", "human");
-  const agent = stampOf("a1", "agent_of_human");
-  make(
-    "Sheet1",
-    {
-      "A1:c": 10, "A1:by": human,
-      "A2:c": 20, "A2:by": agent,
-      "A3:c": "text", "A3:by": human, "A3:fmt.bold": true, "A3:fby": agent,
-      "B1:c": "=SUM(A1:A3)+'Q 3'!B2", "B1:by": human,
-      "B2:c": "=$A$1*A2&\"A1\"", "B2:by": human,
-      "C5:c": "=A2", "C5:by": agent,
-      "D1:fmt.background": "#ff0000", "D1:fby": human,
-      "bad:c": "oops", "ZZZZ9:c": 1,
-    },
-    { C: 120, B: 80 },
-    2,
-  );
-  make("Q 3", { "B2:c": 5, "B2:by": human, "A1:c": "=Sheet1!A2", "A1:by": human }, {}, 0);
-  doc.getArray("structure").push([{ id: "x", parent: null }, { id: "y", parent: "x" }]);
-  return Y.encodeStateAsUpdate(doc);
-}
+// - a conversion drops an old structure log that holds an unaccepted fork, so cells that may sit at
+//   the wrong address read as good
 
 describe("a workbook saved with A1 keys", () => {
   test("reads the same after the load", () => {
@@ -176,6 +140,14 @@ describe("a workbook saved with A1 keys", () => {
     expect(() => wb.writeRange("Sheet1", "A1", [["new"]], { id: "u1", kind: "human" })).toThrow(/old A1 form/);
     expect(() => wb.sheetNames()).toThrow(/old A1 form/);
     expect(grid(Workbook.fromState(wb.encode()), "A1:A1")).toEqual([[10]]);
+  });
+
+  test("a log that holds an unaccepted fork is refused, and an accepted one converts", () => {
+    const fork2 = [{ id: "a", parent: null }, { id: "b", parent: null }];
+    expect(() => Workbook.fromState(legacyState(fork2))).toThrow(/at the same time and not accepted/);
+    expect(() => Workbook.fromState(legacyState([...fork2, { id: "c", parent: "b", accepted: true }]))).not.toThrow();
+    expect(() => Workbook.fromState(legacyState([{ id: "a", parent: null }, { id: "b", parent: "a" }]))).not.toThrow();
+    expect(() => Workbook.fromState(legacyState([]))).not.toThrow();
   });
 
   test("a key already in the new form is kept", () => {
