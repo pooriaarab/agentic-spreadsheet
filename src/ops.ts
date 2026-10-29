@@ -43,7 +43,7 @@ export interface Op {
   run(args: any, ctx: Ctx): Promise<unknown>;
 }
 
-const book = z.string().regex(/^[\w-][\w.-]*$/, "must use letters, digits, dot, dash, or underscore").describe("Workbook id.");
+const book = z.string().max(256).regex(/^(?!__.*__$)[\w-][\w.-]*$/, "must use letters, digits, dot, dash, or underscore, and not start and end with two underscores").describe("Workbook id.");
 const sheet = z.string().optional().describe("Sheet name. Defaults to the first sheet.");
 const grid = z.preprocess(
   (v) => {
@@ -59,8 +59,11 @@ const grid = z.preprocess(
 const COLLECTION = "workbooks";
 const newKey = (id: string) => `workbooks/${id}/${crypto.randomUUID()}`;
 
+// Stored data is bad. The Worker answers 500 for it, as the fault is not the caller's.
+export class DataError extends Error {}
+
 // The document pointed at a state that a newer save already replaced. The caller reads again.
-class Stale extends Error {
+class Stale extends DataError {
   constructor(id: string) {
     super(`the stored state of workbook "${id}" is missing`);
   }
@@ -72,7 +75,7 @@ async function open(ctx: Ctx, ops: StoreOps, id: string): Promise<{ wb: Workbook
   const doc = await ops.get(COLLECTION, id);
   if (doc === null) throw new OpError(`no workbook "${id}"`, 404);
   if (typeof doc.state === "string") return { wb: Workbook.fromState(fromBase64(doc.state)) };
-  if (typeof doc.blob !== "string") throw new Error(`the stored record of workbook "${id}" is malformed`);
+  if (typeof doc.blob !== "string") throw new DataError(`the stored record of workbook "${id}" is malformed`);
   const blob = await ctx.blobs.get(doc.blob);
   if (blob === null) throw new Stale(id);
   return { wb: Workbook.fromState(blob.data), key: doc.blob };
@@ -117,7 +120,8 @@ async function transactOnce<T>(ctx: Ctx, work: (tx: StoreOps, written: (key: str
     return result;
   } catch (error) {
     // An adapter may commit and then fail. Keep a blob that the document already points at.
-    if (pending !== undefined && (await ctx.store.get(COLLECTION, owner).catch(() => null))?.blob !== pending) await drop(pending);
+    // If the check itself fails, keep the blob: an orphan costs space, a dropped live blob costs the workbook.
+  if (pending !== undefined && (await ctx.store.get(COLLECTION, owner).then((doc) => doc?.blob !== pending, () => false))) await drop(pending);
     if (error instanceof StoreConflictError) throw new OpError("another writer changed the workbook. Try again", 409);
     throw error;
   }

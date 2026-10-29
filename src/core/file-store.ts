@@ -95,7 +95,13 @@ export function createFileStore(dir: string, options: FileStoreOptions = {}): St
         throw new Error(`"${file}" is not valid JSON`);
       }
       if (typeof doc !== "object" || doc === null || Array.isArray(doc)) throw new Error(`"${file}" is not a workbook file`);
-      rows.set(name.slice(0, -5), { v: ++data.clock, doc: doc as Doc });
+      const id = name.slice(0, -5);
+      try {
+        assertId(id);
+      } catch {
+        throw new Error(`"${file}" has an id that this version does not accept. Rename the file`);
+      }
+      rows.set(id, { v: ++data.clock, doc: doc as Doc });
     }
     if (rows.size > 0) data.tables.set("workbooks", rows);
     return data;

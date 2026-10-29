@@ -8,6 +8,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryBlobs, createMemoryStore, type Blobs, type Store } from "agentic-identity";
 import { runBlobsContract, runStoreContract } from "agentic-identity/testing";
+import { z } from "zod";
 import { afterAll, describe, expect, test } from "vitest";
 import { createFileBlobs, createFileStore } from "./core/file-store.js";
 import { OPS, type Ctx } from "./ops.js";
@@ -66,6 +67,11 @@ describe("workbooks on shared ports", () => {
     await expect(createFileStore(dir).get("workbooks", "broken")).rejects.toThrow(/not valid JSON/);
     await expect(createFileStore(dir).put("workbooks", "fresh", { name: "x" })).rejects.toThrow(/not valid JSON/);
     expect(existsSync(join(dir, "store.json"))).toBe(false);
+    writeFileSync(join(dir, "workbooks", "broken.json"), "{}");
+    writeFileSync(join(dir, "workbooks", "__x__.json"), "{}");
+    await expect(createFileStore(dir).query("workbooks")).rejects.toThrow(/__x__\.json" has an id.*Rename/);
+    const accepts = (book: string) => z.object(OPS.find((o) => o.name === "new")!.shape).safeParse({ book }).success;
+    expect([accepts("__y__"), accepts("a".repeat(257)), accepts("_y_"), accepts("a".repeat(256))]).toEqual([false, false, true, true]);
   });
 
   test("a read creates no directory", async () => {
