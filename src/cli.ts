@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { ctxFromEnv } from "./env.js";
 import { message, OPS } from "./ops.js";
+import { remoteFromEnv, runShareOp, SetupError, SHARE_OPS } from "./remote.js";
 import { VERSION } from "./version.js";
 
 const HELP = `agentic-spreadsheet ${VERSION}
@@ -10,12 +11,16 @@ Usage: agentic-spreadsheet <command> [args] [flags]
 
 Commands:
 ${OPS.map((op) => `  ${`${op.name} ${op.args.map((a) => `<${a}>`).join(" ")}`.trim().padEnd(26)}${op.description}`).join("\n")}
+${SHARE_OPS.map((op) => `  ${`${op.name} ${op.args.map((a) => `<${a}>`).join(" ")}`.trim().padEnd(26)}${op.description}`).join("\n")}
   mcp                       Start the MCP server on stdio.
 
 Flags: --sheet <name> --dir <path> --file <csv> --as-text.
 A write needs --as <id> and --kind <kind>, or SHEET_AS and SHEET_KIND. The kind is one of
 human, agent_of_human, agent_of_agent, agent, user_token. There is no default.
-Env: SHEET_DIR, SHEET_AS, SHEET_KIND. The store is ./.sheets unless --dir or SHEET_DIR says otherwise.`;
+share, shares, and unshare call a Worker: set SHEET_URL and SHEET_TOKEN. They take --subject <id> --subject-kind <human|agent>
+(--kind is the kind of a writer), and share takes --role <viewer|commenter|editor>. A local store has no roles.
+The Worker has no share links. With SHEET_URL and SHEET_TOKEN set, "mcp" also has sheet_share, sheet_shares, and sheet_unshare.
+Env: SHEET_URL, SHEET_TOKEN, SHEET_DIR, SHEET_AS, SHEET_KIND. The store is ./.sheets unless --dir or SHEET_DIR says otherwise.`;
 
 async function main(argv: string[]): Promise<number> {
   const [command, ...rest] = argv;
@@ -27,7 +32,8 @@ async function main(argv: string[]): Promise<number> {
     await (await import("./mcp.js")).startMcp();
     return 0;
   }
-  const op = OPS.find((o) => o.name === command);
+  const shareOp = SHARE_OPS.find((o) => o.name === command);
+  const op = shareOp ?? OPS.find((o) => o.name === command);
   if (op === undefined) return (console.error(`unknown command "${command}". Run with --help.`), 2);
   const flags: Record<string, string | boolean> = {};
   const positional: string[] = [];
@@ -44,13 +50,19 @@ async function main(argv: string[]): Promise<number> {
     const env = { ...process.env, ...(dir && { SHEET_DIR: String(dir) }), ...(as && { SHEET_AS: String(as) }), ...(kind && { SHEET_KIND: String(kind) }) };
     op.args.forEach((name, i) => positional[i] !== undefined && (args[name] = positional[i]));
     if (typeof file === "string") args.csv = readFileSync(file, "utf8");
-    const result = (await op.run(z.object(op.shape).strict().parse(args), ctxFromEnv(env))) as { csv?: string };
+    if (shareOp !== undefined) {
+      const remote = remoteFromEnv(process.env);
+      if (remote === undefined) return (console.error("sharing needs a Worker: set SHEET_URL and SHEET_TOKEN. A local store has no roles."), 2);
+      console.log(JSON.stringify(await runShareOp(shareOp, z.object(shareOp.shape).strict().parse(args), remote)));
+      return 0;
+    }
+    const result = (await (op as (typeof OPS)[number]).run(z.object(op.shape).strict().parse(args), ctxFromEnv(env))) as { csv?: string };
     if (op.name === "export") process.stdout.write(result.csv ?? "");
     else console.log(JSON.stringify(result));
     return 0;
   } catch (error) {
     console.error(`error: ${message(error)}`);
-    return 1;
+    return error instanceof SetupError ? 2 : 1;
   }
 }
 

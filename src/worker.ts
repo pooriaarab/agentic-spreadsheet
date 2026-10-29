@@ -123,6 +123,13 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
     await access.share(c.get("who"), c.req.param("book"), { kind: parsed.data.kind, id: parsed.data.subject }, parsed.data.role as ShareRole);
     return c.json({ ok: true });
   });
+  api.get("/:book/shares", async (c) => {
+    const denied = await guard(c, "admin", c.req.param("book"));
+    if (denied !== null) return denied;
+    const query = z.object({ limit: z.coerce.number().int().min(1).max(100).optional(), cursor: z.string().max(512).optional() }).strict().safeParse(c.req.query());
+    if (!query.success) return c.json({ error: message(query.error) }, 400);
+    return c.json(await access.list(c.get("who"), c.req.param("book"), query.data));
+  });
   api.delete("/:book/share/:kind/:subject", async (c) => {
     const kind = z.enum(SUBJECT_KIND_NAMES).safeParse(c.req.param("kind"));
     if (!kind.success) return c.json({ error: "the kind is human or agent" }, 400);
