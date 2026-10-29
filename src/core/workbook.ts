@@ -69,6 +69,7 @@ const MAX_RANGE_CELLS = 1_000_000;
 const MAX_FORMAT_CELLS = 100_000;
 export const MAX_STRUCTURE_COUNT = 10_000;
 export const MAX_TEXT = 32_767;
+export const MAX_SHEET_NAME = 256;
 const MAX_FORMULA = 8_192;
 const BAD_SHEET_NAME = /[[\]:*?/\\!']/;
 const FORMAT_FIELDS = ["numberFormat", "bold", "italic", "align", "color", "background"] as const;
@@ -542,6 +543,8 @@ export class Workbook {
 
   private restructure(name: string, axis: Axis, op: "insert" | "delete", at: number, count: number): void {
     const max = this.check(axis, at, count);
+    // A delete must name rows or columns that exist, so a range past the edge is an error, not a no-op.
+    if (op === "delete" && at + count - 1 > max) throw new SheetError(`cannot delete ${count} ${axis}s from ${at}: the sheet ends at ${max}`);
     const sheet = this.find(name);
     const layout = this.layout(sheet, axis);
     const order = sheet.get(ORDER_KEY[axis]) as Y.Array<Entry>;
@@ -655,7 +658,7 @@ export class Workbook {
   }
 
   private checkName(name: string): void {
-    if (name.trim() === "" || BAD_SHEET_NAME.test(name)) throw new SheetError(`invalid sheet name "${name}"`);
+    if (name.trim() === "" || name.length > MAX_SHEET_NAME || BAD_SHEET_NAME.test(name)) throw new SheetError(`invalid sheet name "${name}"`);
     if (this.sheetNames().some((existing) => sameSheet(existing, name))) {
       throw new SheetError(`sheet "${name}" exists`);
     }

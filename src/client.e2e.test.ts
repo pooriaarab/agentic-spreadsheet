@@ -130,6 +130,10 @@ describe("client against the Worker", () => {
     expect(await failure(bot.deleteSheet({ book: "shape", name: "Sheet1" }))).toMatchObject({ status: 400, code: "bad_request" });
     expect(await failure(bot.addSheet({ book: "shape", name: "Sheet1" }))).toMatchObject({ status: 400 });
     expect(await failure(bot.deleteRows({ book: "shape", at: 0 }))).toMatchObject({ status: 400 });
+    // A delete past the end of the sheet is an error, and so is a sheet name that is too long.
+    expect(await failure(bot.deleteRows({ book: "shape", at: 1_048_576, count: 2 }))).toMatchObject({ status: 400 });
+    expect(await failure(bot.deleteCols({ book: "shape", at: 16_384, count: 2 }))).toMatchObject({ status: 400 });
+    expect(await failure(bot.addSheet({ book: "shape", name: "x".repeat(257) }))).toMatchObject({ status: 400 });
   });
 
   test("a viewer cannot change the structure, and a stranger sees no workbook", async () => {
