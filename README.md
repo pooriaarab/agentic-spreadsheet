@@ -83,8 +83,9 @@ The root export, `agentic-spreadsheet`, also has these helpers.
   a number, a boolean, a formula, or text. Empty text gives `null`. With `asText` set to `true`, a leading `=`
   is kept as text, with a `'` in front.
 - Stores. `createMemoryStore()` and `createMemoryBlobs()` keep data in memory, for tests. `createFileStore(dir)`
-  and `createFileBlobs(dir)` keep data in files, as the CLI does. A store throws `StoreConflictError` when a
-  write loses a race or cannot get its lock in time. Retry the write, and read the book first.
+  and `createFileBlobs(dir)` keep data in files, as the CLI does. A store runs a transaction again when another
+  writer changed what it read. It throws `StoreConflictError` when the transaction keeps losing, or when it
+  cannot get its lock in time. Read the book, then retry the write.
 - `ctxFromEnv(process.env)` builds the context that the CLI and the MCP server use. It reads `SHEET_DIR`,
   `SHEET_AS`, and `SHEET_KIND`.
 - `OPS` lists the operations that the CLI, the MCP server, and the HTTP API run. Each has a `name`, a
