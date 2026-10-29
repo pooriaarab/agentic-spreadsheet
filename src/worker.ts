@@ -228,14 +228,10 @@ export function roomRole(role: Role, scopes: string[] | undefined): Role {
 export const WS_PROTOCOL = "agentic-spreadsheet";
 
 // Who may join the presence room of a book, and as what. A browser cannot set a header on a WebSocket, so the key comes
-// in a subprotocol entry, and the Authorization header still works for other clients. The `token` query parameter is
-// deprecated: URLs reach logs and proxies. It works for one more release and only when the request offers no key of
-// the new kind. The room carries presence only: cells travel through the API. A principal with no read right on the book gets null.
+// in a subprotocol entry, and the Authorization header still works for other clients. A `token` query parameter is
+// not read: URLs reach logs and proxies. The room carries presence only: cells travel through the API. A principal with no read right on the book gets null.
 export async function roomGrant(request: Request, book: string, env: WorkerEnv) {
   const headers = new Headers(request.headers);
-  const token = new URL(request.url).searchParams.get("token");
-  const offersKey = (headers.get("sec-websocket-protocol") ?? "").includes(`${WS_PROTOCOL}.bearer.`);
-  if (!headers.has("authorization") && !offersKey && token !== null) headers.set("authorization", `Bearer ${token}`);
   const { store } = await storageFor(env);
   const authenticate = await authenticatorFor(env, store);
   // The helper reads the subprotocol and calls this port with the key as a bearer header. The caller keeps its scopes.
