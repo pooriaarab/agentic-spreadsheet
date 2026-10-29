@@ -2,8 +2,9 @@ import { z } from "zod";
 import { colLetters, MAX_ROW, parseRange } from "./core/a1.js";
 import { Engine } from "./core/engine.js";
 import { formatCsv, inferCell, parseCsv } from "./core/csv.js";
-import { FileStore, type Store } from "./core/store.js";
-import { MAX_STRUCTURE_COUNT, PRINCIPAL_KINDS, SheetError, Workbook, type Principal, type PrincipalKind } from "./core/workbook.js";
+import { fromBase64, toBase64 } from "./core/bytes.js";
+import type { Store } from "./core/store.js";
+import { MAX_STRUCTURE_COUNT, Workbook, type Principal } from "./core/workbook.js";
 
 // One list of operations serves the CLI and the MCP server.
 
@@ -11,20 +12,18 @@ export interface Ctx {
   store: Store;
   // Who is writing. It throws when the caller did not say, so no edit gets a default label.
   principal(): Principal;
+  // The most cells one write or import may carry. The CLI sets none. The Worker sets a cap.
+  maxWriteCells?: number;
 }
 
-export function ctxFromEnv(env: Record<string, string | undefined>): Ctx {
-  return {
-    store: new FileStore(env.SHEET_DIR ?? ".sheets"),
-    principal() {
-      const { SHEET_AS: id = "", SHEET_KIND: kind = "" } = env;
-      if (id === "") throw new Error("say who is writing: set --as <id> (or SHEET_AS)");
-      if (!PRINCIPAL_KINDS.includes(kind as PrincipalKind)) {
-        throw new Error(`say what kind of writer this is: set --kind (or SHEET_KIND) to one of ${PRINCIPAL_KINDS.join(", ")}`);
-      }
-      return { id, kind: kind as PrincipalKind };
-    },
-  };
+// An error with an HTTP-style status, so the Worker can answer 404 or 409 and not a blanket 400.
+export class OpError extends Error {
+  constructor(
+    message: string,
+    readonly status: 404 | 409 | 413,
+  ) {
+    super(message);
+  }
 }
 
 export function message(error: unknown): string {
@@ -57,8 +56,8 @@ const grid = z.preprocess(
 
 async function open(store: Store, id: string): Promise<Workbook> {
   const doc = await store.get("workbooks", id);
-  if (doc === null) throw new Error(`no workbook "${id}"`);
-  return Workbook.fromState(Buffer.from(doc.state as string, "base64"));
+  if (doc === null) throw new OpError(`no workbook "${id}"`, 404);
+  return Workbook.fromState(fromBase64(doc.state as string));
 }
 
 // Read, change, and save one workbook while holding the store lock. The workbook is saved only
@@ -67,9 +66,16 @@ function edit<T>(ctx: Ctx, id: string, change: (wb: Workbook) => T): Promise<T> 
   return ctx.store.transaction(async (store) => {
     const wb = await open(store, id);
     const result = change(wb);
-    await store.put("workbooks", id, { name: id, state: Buffer.from(wb.encode()).toString("base64"), updatedAt: new Date().toISOString() });
+    await store.put("workbooks", id, { name: id, state: toBase64(wb.encode()), updatedAt: new Date().toISOString() });
     return result;
   });
+}
+
+function checkWriteSize(ctx: Ctx, rows: unknown[][]): void {
+  const cells = rows.reduce<number>((sum, row) => sum + row.length, 0);
+  if (ctx.maxWriteCells !== undefined && cells > ctx.maxWriteCells) {
+    throw new OpError(`a write of ${cells.toLocaleString("en-US")} cells is too large (limit ${ctx.maxWriteCells.toLocaleString("en-US")} cells)`, 413);
+  }
 }
 
 const first = (wb: Workbook, name?: string) => name ?? wb.sheetNames()[0];
@@ -83,10 +89,10 @@ export const OPS: Op[] = [
     shape: { book, sheet: z.string().optional().describe("Name of the first sheet. Defaults to Sheet1.") },
     run(a: { book: string; sheet?: string }, ctx) {
       return ctx.store.transaction(async (store) => {
-        if ((await store.get("workbooks", a.book)) !== null) throw new Error(`workbook "${a.book}" exists`);
+        if ((await store.get("workbooks", a.book)) !== null) throw new OpError(`workbook "${a.book}" exists`, 409);
         const wb = new Workbook();
         wb.addSheet(a.sheet ?? "Sheet1");
-        await store.put("workbooks", a.book, { name: a.book, state: Buffer.from(wb.encode()).toString("base64"), updatedAt: new Date().toISOString() });
+        await store.put("workbooks", a.book, { name: a.book, state: toBase64(wb.encode()), updatedAt: new Date().toISOString() });
         return { book: a.book, sheets: wb.sheetNames() };
       });
     },
@@ -117,6 +123,7 @@ export const OPS: Op[] = [
     shape: { book, anchor: z.string().describe("Top-left cell, such as A1."), values: grid, sheet },
     async run(a: { book: string; anchor: string; values: (string | number | boolean | null)[][]; sheet?: string }, ctx) {
       const who = ctx.principal();
+      checkWriteSize(ctx, a.values);
       await edit(ctx, a.book, (wb) => wb.writeRange(first(wb, a.sheet), a.anchor, a.values, who));
       return { ok: true, rows: a.values.length };
     },
@@ -158,7 +165,7 @@ export const OPS: Op[] = [
       if (extent === null) return { csv: "" };
       const { c2, r2 } = parseRange(extent);
       if (c2 * r2 > MAX_EXPORT_CELLS) {
-        throw new SheetError(`sheet ${name} spans ${extent}, which is too large to export (limit ${MAX_EXPORT_CELLS} cells)`);
+        throw new OpError(`sheet ${name} spans ${extent}, which is too large to export (limit ${MAX_EXPORT_CELLS.toLocaleString("en-US")} cells)`, 413);
       }
       // Read the sheet in blocks sized by cells, so a wide sheet never builds one giant grid.
       const rowsPerBlock = Math.max(1, Math.floor(EXPORT_BLOCK_CELLS / c2));
@@ -181,6 +188,7 @@ export const OPS: Op[] = [
     async run(a: { book: string; csv: string; asText: boolean; sheet?: string }, ctx) {
       const who = ctx.principal();
       const rows = parseCsv(a.csv).map((row) => row.map((text) => inferCell(text, a.asText)));
+      checkWriteSize(ctx, rows);
       await edit(ctx, a.book, (wb) => wb.writeRange(first(wb, a.sheet), "A1", rows, who));
       return { ok: true, rows: rows.length };
     },

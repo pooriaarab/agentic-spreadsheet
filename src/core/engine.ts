@@ -31,8 +31,8 @@ type Ref = Extract<Node, { t: "ref" }>;
 
 const ERRORS = new Set<string>(["#REF!", "#DIV/0!", "#NAME?", "#VALUE!", "#NUM!", "#N/A", "#CIRCULAR", "#DEPTH!"]);
 const MAX_RANGE_CELLS = 1_000_000;
-// Range cells one formula may read.
-const MAX_WORK = 10_000_000;
+// Range cells one formula may read. A formula builds a matrix per range, so this bounds its memory.
+const MAX_WORK = 1_000_000;
 // formulajs reads a blank cell as 0. These groups need another reading.
 const TEXT_FUNCTIONS = new Set([
   "LEFT", "RIGHT", "MID", "LEN", "UPPER", "LOWER", "TRIM", "CONCAT", "TEXT", "CONCATENATE", "SUBSTITUTE", "FIND",

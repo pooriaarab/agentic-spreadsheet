@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 import { readFileSync } from "node:fs";
 import { z } from "zod";
-import { ctxFromEnv, message, OPS } from "./ops.js";
+import { ctxFromEnv } from "./env.js";
+import { message, OPS } from "./ops.js";
 import { VERSION } from "./version.js";
 
 const HELP = `agentic-spreadsheet ${VERSION}
