@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { AppShell, Button, Dialog, EmptyState, Input, Select, SidebarNav, useTheme, type ThemePreference } from "agentic-design/react";
 import { SheetsApiError } from "../src/client.js";
 import { clientFor, errorText, getToken, isUnauthorized, setToken } from "./session.js";
-import { SheetView } from "./SheetView.js";
+import { WorkbookView } from "./embed.js";
 
 const bookFromHash = (): string | null => {
   const id = decodeURIComponent(location.hash.replace(/^#\//, ""));
@@ -16,11 +16,11 @@ function SignIn({ onSignIn, notice }: { onSignIn: (token: string) => void; notic
     if (key.trim() !== "") onSignIn(key.trim());
   };
   return (
-    <main className="center">
-      <form className="card" onSubmit={submit}>
+    <main className="as-center">
+      <form className="as-card" onSubmit={submit}>
         <h1>Sign in to Sheets</h1>
-        <p className="muted">Paste an API key. This tab keeps it until you close the tab.</p>
-        {notice && <p role="alert" className="error-text">{notice}</p>}
+        <p className="as-muted">Paste an API key. This tab keeps it until you close the tab.</p>
+        {notice && <p role="alert" className="as-error-text">{notice}</p>}
         <Input label="API key" type="password" autoComplete="off" value={key} onChange={(e) => setKey(e.target.value)} />
         <Button type="submit">Sign in</Button>
       </form>
@@ -114,21 +114,21 @@ export function App() {
         title="New workbook"
         description="Use letters, digits, dot, dash, or underscore."
       >
-        <form className="stack" onSubmit={create}>
+        <form className="as-stack" onSubmit={create}>
           <Input label="Workbook name" value={name} onChange={(e) => setName(e.target.value)} error={nameError} autoComplete="off" />
           <Button type="submit" disabled={name.trim() === ""}>Create workbook</Button>
         </form>
       </Dialog>
-      {books.status === "loading" && <p role="status" className="muted">Loading workbooks…</p>}
+      {books.status === "loading" && <p role="status" className="as-muted">Loading workbooks…</p>}
       {books.status === "error" && (
-        <div role="alert" className="banner">
+        <div role="alert" className="as-banner">
           <p>Could not load the workbooks: {books.message}</p>
           <Button size="sm" variant="secondary" onClick={() => void load()}>Try again</Button>
         </div>
       )}
       {books.status === "ready" && book === null && (
         <section>
-          <h1>Workbooks</h1>
+          <h1 className="as-title">Workbooks</h1>
           <EmptyState
             title={list.length === 0 ? "No workbooks yet" : "Pick a workbook"}
             description={list.length === 0 ? "Create a workbook to start a sheet." : "Choose a workbook in the list."}
@@ -136,7 +136,7 @@ export function App() {
           />
         </section>
       )}
-      {book !== null && <SheetView key={book} client={client} book={book} token={token} onUnauthorized={() => signOut("That key is not valid. Try another.")} />}
+      {book !== null && <WorkbookView key={book} client={client} docId={book} principal={{ kind: "human", name: "Me" }} token={token} onUnauthorized={() => signOut("That key is not valid. Try another.")} />}
     </AppShell>
   );
 }

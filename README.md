@@ -195,6 +195,44 @@ Every kind but `human` counts as an agent.
 The owner cannot lower its own role. Each check adds an audit entry to the store, and nothing limits how many.
 If the Worker fails after it saves a new workbook and before it records the owner, the book has no owner.
 
+## Mount the sheet in your page
+
+`agentic-spreadsheet/ui` renders the sheet into an element. It needs no framework in your app.
+You must install `react` and `react-dom` (version 19) yourself: `./ui` needs them as peer dependencies.
+Load the styles once with `agentic-spreadsheet/ui.css`. The file has the `agentic-design` tokens, the component styles, and the fonts
+it needs. It has no rule for `*`, `html`, `body`, headings, or links, so it leaves your page alone. The grid classes start with `as-`.
+The sheet puts one `<h1>` with the workbook name in your page. The sheet does not set the theme of
+your page: `agentic-design` reads `data-theme` on `<html>`, and your page owns that attribute.
+The sheet uses the typed client, so the page must reach the Worker API.
+
+```ts
+import { createClient } from "agentic-spreadsheet/client";
+import { mount } from "agentic-spreadsheet/ui";
+import "agentic-spreadsheet/ui.css";
+
+const client = createClient({ baseUrl: "https://sheets.example.com", token });
+const sheet = mount(document.getElementById("sheet")!, {
+  client,
+  docId: "budget",
+  principal: { kind: "human", name: "Ada" }, // kind is required: there is no default
+  readOnly: false, // true shows the cells and allows no edit
+});
+
+sheet.update({ client, docId: "forecast", principal: { kind: "human", name: "Ada" } }); // show another workbook
+sheet.unmount(); // remove the sheet and stop its polling
+```
+
+- `principal` needs a known `kind` and a `name`. A missing or unknown kind throws a `TypeError`, and so does
+  a bad `client` or an empty `docId`. The kind is only checked. It does not change what the server allows:
+  the server checks every write against the key of the client. The name shows in the presence room.
+- `readOnly` turns off cell edits, the formula bar, and the row, column, and sheet buttons.
+- `token` is optional. With it, the sheet joins the presence room on the origin of the page, and it sends
+  the key in the query string of that socket. Do not pass `token` when the page and the Worker use
+  different origins. Without it, the sheet shows no peers. See "Hosting" below for what presence needs.
+- `onUnauthorized` runs when the server rejects the key.
+- A React app can use the `WorkbookView` component from the same entry instead. Put it inside the
+  providers of `agentic-design/react`. The web UI of this repo uses it.
+
 ## UI
 
 A small web UI comes with the Worker in this repo. The UI source is in `ui/`, and `src/ui-worker.ts` serves it.
