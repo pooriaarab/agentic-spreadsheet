@@ -137,13 +137,26 @@ describe("limits and bad input", () => {
     const taken = fresh();
     taken.addSheet("Data");
     taken.writeRange("Data", "A1", [["OLD"]], human);
-    expect(() => addSheets(taken, file, human)).toThrow(/would be renamed "Data \(2\)", and a formula names it/);
+    expect(() => addSheets(taken, file, human)).toThrow(/would be renamed "Data \(2\)", and a formula in the file names a sheet/);
     expect(taken.sheetNames()).toEqual(["Sheet1", "Data"]);
     const clean = fresh();
     addSheets(clean, file, human);
     const engine = new Engine(clean);
     expect(engine.values("Summary", "A1")[0]![0]).toBe("NEW");
     engine.dispose();
+  });
+
+  test("a sheet name with an apostrophe is renamed, so a formula that quotes it is refused", () => {
+    const file: FileBook = { sheets: [{ name: "S", cells: { A1: { formula: "'Bob''s'!A1" } } }, { name: "Bob's", cells: { A1: { value: 5 } } }] };
+    const target = fresh();
+    expect(() => addSheets(target, file, human)).toThrow(/would be renamed "Bob_s"/);
+    expect(target.sheetNames()).toEqual(["Sheet1"]);
+  });
+
+  test("a rename with no formula that names a sheet goes through, even when a formula holds the letters of the name", () => {
+    const file: FileBook = { sheets: [{ name: "S:1", cells: { A1: { formula: "SUM(B1:B2)" }, B1: { value: 2 } } }] };
+    const target = fresh();
+    expect(addSheets(target, file, human)).toEqual(["S_1"]);
   });
 
   test("a bad principal is refused even when every sheet is empty", () => {
@@ -202,7 +215,7 @@ describe("file kinds", () => {
     ["B.XLSX", "xlsx"],
     ["a.tar.xlsx", "xlsx"],
     ["a.csv", null],
-    ["xlsx", "xlsx"],
+    ["xlsx", null],
     ["", null],
   ])("formatOf(%s) is %s", (name, expected) => expect(formatOf(name)).toBe(expected));
 

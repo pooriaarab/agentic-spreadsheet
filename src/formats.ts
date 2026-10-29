@@ -14,7 +14,8 @@ export const MIME: Record<SheetFormat, string> = {
 
 /** The format a file name asks for, by its extension, or null. */
 export function formatOf(fileName: string): SheetFormat | null {
-  const ext = fileName.toLowerCase().split(".").pop();
+  const parts = fileName.toLowerCase().split(".");
+  const ext = parts.length > 1 ? parts.pop() : undefined;
   return ext === "ods" || ext === "xlsx" ? ext : null;
 }
 
@@ -32,7 +33,7 @@ export function toFileBook(book: Workbook): FileBook {
       if (extent) {
         const { c2, r2 } = parseRange(extent);
         grid += c2 * r2;
-        if (c2 * r2 > DEFAULT_LIMITS.maxCells || grid > DEFAULT_LIMITS.maxCells) throw new SheetError(`the sheet ${name} is too large to export`);
+        if (grid > DEFAULT_LIMITS.maxCells) throw new SheetError(`the sheet ${name} is too large to export`);
         const read = book.readRange(name, extent);
         const values = engine.values(name, extent);
         read.forEach((row, r) =>
@@ -81,7 +82,7 @@ function freeName(taken: Set<string>, requested: string): string {
 
 /**
  * The name each sheet gets in the workbook. A name that is taken, or has a banned character, changes. A formula names
- * a sheet as text, and the text would then point at another sheet, or at none, so a formula that names a changed sheet is refused.
+ * a sheet as text, and the text would then point at another sheet, or at none, so a file with a rename and a formula that names a sheet is refused.
  */
 function renamed(model: FileBook, taken: Set<string>): string[] {
   const names = model.sheets.map((sheet) => {
@@ -89,12 +90,12 @@ function renamed(model: FileBook, taken: Set<string>): string[] {
     taken.add(name.toLowerCase());
     return name;
   });
-  const formulas = model.sheets.flatMap((sheet) => Object.values(sheet.cells).flatMap((cell) => (cell.formula ? [cell.formula.toLowerCase()] : [])));
-  model.sheets.forEach((sheet, i) => {
-    if (names[i] !== sheet.name && formulas.some((f) => f.includes(sheet.name.toLowerCase()))) {
-      throw new SheetError(`the sheet "${sheet.name}" would be renamed "${names[i]}", and a formula names it`);
-    }
-  });
+  // A sheet name sits before `!`, in plain or quoted form (`'Bob''s'!A1`), so any formula with `!` may name a changed sheet.
+  const crossSheet = model.sheets.some((sheet) => Object.values(sheet.cells).some((cell) => cell.formula?.includes("!")));
+  const changed = model.sheets.findIndex((sheet, i) => names[i] !== sheet.name);
+  if (crossSheet && changed >= 0) {
+    throw new SheetError(`the sheet "${model.sheets[changed]!.name}" would be renamed "${names[changed]}", and a formula in the file names a sheet`);
+  }
   return names;
 }
 

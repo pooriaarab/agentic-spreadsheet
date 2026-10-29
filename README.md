@@ -85,8 +85,9 @@ const { names } = importFile("ods", odsBytes, book, { id: "bot", kind: "agent_of
 - `exportFile(format, book)` returns the bytes and the notes of what the format could not hold. A formula cell
   keeps its formula and its shown value. The used ranges of all the sheets together can hold up to 1,000,000 cells, or the call throws a `SheetError`.
 - `importFile(format, bytes, book, by)` adds the sheets of the file after the sheets that are there. A taken
-  name gets a number, and a name is cut to 31 characters. A formula in the file that names a sheet that must be
-  renamed throws a `SheetError`, because the formula would point at another sheet. Every imported cell has the author `by`. All of the sheets are added, or none. A file over
+  name gets a number, and a name is cut to 31 characters. A file that needs a rename, and has a formula that names a sheet (a
+  `!` in the formula), throws a `SheetError`, because the formula would point at another sheet. A formula that
+  names a sheet that is not in the file binds to the sheet of that name in the workbook, if there is one. Every imported cell has the author `by`. All of the sheets are added, or none. A file over
   25 MB, over 100 sheets, or over 1,000,000 cells in the grids of its sheets throws a `SheetError`. Bytes that are
   not a file of that format throw the `FormatError` of `agentic-formats`.
 - `formatOf(fileName)` returns `"ods"`, `"xlsx"`, or `null`. `toFileBook(book)` and `addSheets(book, model, by)`
