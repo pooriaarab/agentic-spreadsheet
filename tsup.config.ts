@@ -13,7 +13,7 @@ const withoutPageRules: Plugin = {
       const start = css.indexOf("/* Base rules.");
       const end = css.indexOf("/* Component styles.");
       if (start < 0 || end < start) throw new Error("agentic-design/styles.css changed: update withoutPageRules in tsup.config.ts");
-      const keep = css.slice(start, end).match(/\.ad-sr-only \{[^}]*\}/)?.[0] ?? "";
+      const keep = css.slice(start, end).match(/\.agd-sr-only \{[^}]*\}/)?.[0] ?? "";
       return { contents: css.slice(0, start) + keep + "\n" + css.slice(end), loader: "css", resolveDir: dirname(path) };
     }),
 };

@@ -207,7 +207,7 @@ describe("mount with a host document", () => {
     expect(presence.setPresence).toHaveBeenLastCalledWith({ cursor: "A1" });
     await act(async () => setPeers([{ clientId: 3, name: "Scribe", machine: true, kind: "agent", cursor: "B1", color: "", away: "active" }]));
     expect(cell("1,2").getAttribute("aria-label")).toContain("also here");
-    expect(element.querySelector(".ad-stack__summary")?.textContent).toBe("1 agent");
+    expect(element.querySelector(".agd-stack__summary")?.textContent).toBe("1 agent");
     await act(async () => cell("2,1").click());
     expect(presence.setPresence).toHaveBeenLastCalledWith({ cursor: "A2" });
     act(() => mounted!.unmount());
@@ -251,9 +251,9 @@ describe("mount with a host document", () => {
     await show({ host: { doc, presence } });
     await ready();
     await act(async () => setPeers([{ clientId: 3, name: "Scribe", machine: true, kind: "agent", cursor: "B1", color: "", away: "active" }]));
-    expect(element.querySelector(".ad-stack__summary")?.textContent).toBe("1 agent");
+    expect(element.querySelector(".agd-stack__summary")?.textContent).toBe("1 agent");
     await act(async () => mounted!.update({ docId: "budget", principal: ada, host: { doc } }));
-    expect(element.querySelector(".ad-stack__summary")?.textContent ?? "").not.toContain("agent");
+    expect(element.querySelector(".agd-stack__summary")?.textContent ?? "").not.toContain("agent");
     expect(cell("1,2").getAttribute("aria-label")).not.toContain("also here");
   });
 
