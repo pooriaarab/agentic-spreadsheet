@@ -10,6 +10,16 @@ export interface Peer {
 }
 export type Live = "connecting" | "connected" | "disconnected";
 
+const base64url = (text: string) => btoa(String.fromCharCode(...new TextEncoder().encode(text))).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+
+// A browser WebSocket cannot send an Authorization header, and a URL reaches logs. The key goes in a subprotocol entry instead.
+class TokenSocket extends WebSocket {
+  constructor(url: string | URL, options?: { headers?: Record<string, string> }) {
+    const token = /^Bearer (.+)$/.exec(options?.headers?.authorization ?? "")?.[1];
+    super(url, token ? ["agentic-spreadsheet", `agentic-spreadsheet.bearer.${base64url(token)}`] : undefined);
+  }
+}
+
 // Join the presence room of a workbook. The room carries who is here and where their cursor is.
 // Cells do not travel through it: the API stores them.
 export function usePresence(book: string, token: string | undefined, cursor: string, name = "Me") {
@@ -26,8 +36,8 @@ export function usePresence(book: string, token: string | undefined, cursor: str
     setLive("connecting");
     setPeers([]);
     const scheme = location.protocol === "https:" ? "wss" : "ws";
-    const url = `${scheme}://${location.host}/api/v1/docs/${encodeURIComponent(book)}/ws?token=${encodeURIComponent(token)}`;
-    openDocument({ url, storageName: `presence:${book}`, presence: { name, cursor: latest.current }, onStatus: (status) => !closed && setLive(status) })
+    const url = `${scheme}://${location.host}/api/v1/docs/${encodeURIComponent(book)}/ws`;
+    openDocument({ url, headers: { authorization: `Bearer ${token}` }, WebSocket: TokenSocket, storageName: `presence:${book}`, presence: { name, cursor: latest.current }, onStatus: (status) => !closed && setLive(status) })
       .then(({ client: opened }) => {
         if (closed) return void opened.disconnect();
         client.current = opened;
