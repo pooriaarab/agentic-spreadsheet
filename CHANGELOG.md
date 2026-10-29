@@ -5,6 +5,11 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `agentic-spreadsheet/formats` maps a workbook to and from ODS and XLSX through `agentic-formats`: `exportFile`,
+  `importFile`, `addSheets`, `toFileBook`, `formatOf`, and `MIME`. An import adds all of its sheets or none.
+
 ## [0.7.1] - 2026-10-29
 
 ### Changed
