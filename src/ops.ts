@@ -145,15 +145,27 @@ function edit<T>(ctx: Ctx, id: string, change: (wb: Workbook) => T): Promise<T> 
   });
 }
 
-// Delete a workbook and its stored state. A missing workbook is a 404.
+// Delete a workbook and its stored state. A missing workbook is a 404. The blob goes first, and a
+// failed blob delete is thrown with the document still in place, so the same call can run again.
+// A save that lands between the two steps points the document at a new blob, so the call starts again.
 export async function removeWorkbook(ctx: Ctx, id: string): Promise<void> {
-  const key = await ctx.store.transaction(async (tx) => {
-    const doc = await tx.get(COLLECTION, id);
+  for (let attempt = 1; ; attempt += 1) {
+    const doc = await ctx.store.get(COLLECTION, id);
     if (doc === null) throw new OpError(`no workbook "${id}"`, 404);
-    await tx.delete(COLLECTION, id);
-    return typeof doc.blob === "string" ? doc.blob : undefined;
-  });
-  if (key !== undefined) await ctx.blobs.delete(key).catch(() => undefined);
+    const key = typeof doc.blob === "string" ? doc.blob : undefined;
+    if (key !== undefined) await ctx.blobs.delete(key);
+    try {
+      await ctx.store.transaction(async (tx) => {
+        const now = await tx.get(COLLECTION, id);
+        if (now === null) return;
+        if (now.blob !== doc.blob) throw new Stale(id);
+        await tx.delete(COLLECTION, id);
+      });
+      return;
+    } catch (error) {
+      if (!(error instanceof Stale) || attempt >= ATTEMPTS) throw error;
+    }
+  }
 }
 
 function checkWriteSize(ctx: Ctx, rows: unknown[][]): void {
