@@ -322,6 +322,22 @@ test("keyboard navigation: arrows stop at the edge, Alt and an arrow resize, a h
   expect(after.width).toBeGreaterThan(before.width);
   expect(after.height).toBeGreaterThan(before.height);
   await expect(cell(page, "B2")).toBeFocused();
+  // Alt and Left or Up shrink them, and the page stays where it is.
+  await page.keyboard.press("Alt+ArrowLeft");
+  await page.keyboard.press("Alt+ArrowUp");
+  expect((await cell(page, "B2").boundingBox())!.width).toBeLessThan(after.width);
+  expect(page.url()).toContain(`#/${book}`);
+  // The buttons are a way to resize with a single click, and no drag.
+  const narrow = (await cell(page, "B2").boundingBox())!.width;
+  await page.getByRole("button", { name: "Widen column" }).click();
+  expect((await cell(page, "B2").boundingBox())!.width).toBeGreaterThan(narrow);
+  // A size stays with its column when a column is inserted before it.
+  const wide = (await cell(page, "B2").boundingBox())!.width;
+  await cell(page, "A1").click();
+  await page.getByRole("button", { name: "Insert column" }).click();
+  await expect(cell(page, "A1")).toBeVisible();
+  expect((await cell(page, "C2").boundingBox())!.width).toBeCloseTo(wide, 0);
+  expect((await cell(page, "B2").boundingBox())!.width).toBeLessThan(wide);
   // A drag on the edge of a column header resizes it, and a double click resets it.
   const head = page.locator("thead th").nth(3);
   const box = (await head.boundingBox())!;
@@ -331,7 +347,7 @@ test("keyboard navigation: arrows stop at the edge, Alt and an arrow resize, a h
   await page.mouse.up();
   expect((await head.boundingBox())!.width).toBeGreaterThan(box.width + 40);
   await page.locator("thead .as-grip-col").nth(2).dblclick({ position: { x: 3, y: 5 } });
-  expect(Math.round((await head.boundingBox())!.width)).toBe(Math.round(box.width));
+  expect(Math.round((await head.boundingBox())!.width)).toBe(112);
   // The first value clears the blank-sheet hint.
   await page.keyboard.type("1");
   await page.keyboard.press("Enter");

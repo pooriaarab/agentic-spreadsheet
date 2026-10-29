@@ -72,7 +72,10 @@ describe("mount", () => {
     const { client, write } = fakeClient();
     await show({ client, docId: "budget", readOnly: true });
     const a1 = cell("1,1");
-    for (const key of ["Enter", "F2", "Delete", "x"]) await act(async () => void a1.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })));
+    for (const key of ["Enter", "F2", "Delete", "x"]) {
+      await act(async () => void a1.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })));
+      await act(async () => void a1.dispatchEvent(new KeyboardEvent("keydown", { key, altKey: true, bubbles: true })));
+    }
     expect(host.querySelector("input.as-editor")).toBeNull();
     expect(write).not.toHaveBeenCalled();
     expect(host.querySelector('[role="grid"]')?.getAttribute("aria-readonly")).toBe("true");

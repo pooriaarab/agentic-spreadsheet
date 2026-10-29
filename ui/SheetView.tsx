@@ -18,6 +18,7 @@ interface Data {
 }
 type View = { status: "loading" } | { status: "empty" } | { status: "error"; message: string } | { status: "ready"; data: Data };
 // Where the text of an edit is typed: in the cell, or in the formula bar.
+type Sizes = { cols: Record<number, number>; rows: Record<number, number> };
 interface Draft {
   text: string;
   where: "cell" | "bar";
@@ -66,8 +67,10 @@ export function SheetView({ client, book, title, changes, presence, connection, 
   const [dialog, setDialog] = useState<"add" | "delete" | null>(null);
   const [newSheet, setNewSheet] = useState("");
   const [sheetError, setSheetError] = useState<string>();
-  // Sizes in pixels that the user set, by column and row. They last as long as the view, per sheet.
-  const [sizes, setSizes] = useState<{ cols: Record<number, number>; rows: Record<number, number> }>({ cols: {}, rows: {} });
+  // Sizes in pixels that the user set, by sheet, then by column and row position. They last as long as the view.
+  // An insert or a delete of a row or column moves the sizes after it, so a size stays with its column or row.
+  const [allSizes, setAllSizes] = useState<Record<string, Sizes>>({});
+  const [note, setNote] = useState("");
   const drag = useRef<{ axis: "cols" | "rows"; index: number; start: number; size: number } | null>(null);
   const grid = useRef<HTMLTableElement>(null);
   const refocus = useRef(false);
@@ -183,17 +186,37 @@ export function SheetView({ client, book, title, changes, presence, connection, 
       fail(error, `Could not save ${address(sel)}`);
     }
   }
+  const sizes: Sizes = allSizes[active ?? ""] ?? { cols: {}, rows: {} };
   const colWidth = (col: number) => sizes.cols[col] ?? COL_WIDTH;
   const rowHeight = (row: number) => sizes.rows[row] ?? ROW_HEIGHT;
-  const resize = (axis: "cols" | "rows", index: number, size?: number) =>
-    setSizes((now) => {
+  const resize = (axis: "cols" | "rows", index: number, size?: number) => {
+    const sheet = active ?? "";
+    setAllSizes((all) => {
+      const now = all[sheet] ?? { cols: {}, rows: {} };
       const next = { ...now[axis] };
       if (size === undefined) delete next[index];
       else next[index] = clampSize(axis, size);
-      return { ...now, [axis]: next };
+      return { ...all, [sheet]: { ...now, [axis]: next } };
+    });
+    if (size !== undefined) setNote(`${axis === "cols" ? "Column" : "Row"} ${axis === "cols" ? colLetters(index) : index}, ${clampSize(axis, size)} pixels`);
+  };
+  // Move the sizes after an inserted (by 1) or a deleted (by -1) row or column.
+  const shiftSizes = (axis: "cols" | "rows", at: number, by: 1 | -1) =>
+    setAllSizes((all) => {
+      const sheet = active ?? "";
+      const now = all[sheet];
+      if (!now) return all;
+      const next: Record<number, number> = {};
+      for (const [key, size] of Object.entries(now[axis])) {
+        const index = Number(key);
+        if (by === 1) next[index >= at ? index + 1 : index] = size;
+        else if (index !== at) next[index > at ? index - 1 : index] = size;
+      }
+      return { ...all, [sheet]: { ...now, [axis]: next } };
     });
   const sizeOf = (axis: "cols" | "rows", index: number) => (axis === "cols" ? colWidth(index) : rowHeight(index));
   function startDrag(event: PointerEvent<HTMLElement>, axis: "cols" | "rows", index: number) {
+    if (event.button !== 0) return;
     event.preventDefault();
     event.currentTarget.setPointerCapture(event.pointerId);
     drag.current = { axis, index, start: axis === "cols" ? event.clientX : event.clientY, size: sizeOf(axis, index) };
@@ -223,8 +246,8 @@ export function SheetView({ client, book, title, changes, presence, connection, 
   function onCellKey(event: KeyboardEvent<HTMLTableCellElement>) {
     if (data === null || event.target !== event.currentTarget) return;
     const { row, col } = sel;
-    const writes = !event.altKey && (event.key === "Enter" || event.key === "F2" || event.key === "Delete" || event.key === "Backspace" || (event.key.length === 1 && !event.ctrlKey && !event.metaKey));
-    if (readOnly && writes) return;
+    const writes = event.key === "Enter" || event.key === "F2" || event.key === "Delete" || event.key === "Backspace" || (event.key.length === 1 && !event.ctrlKey && !event.metaKey);
+    if (readOnly && writes && !event.altKey) return;
     const keys: Record<string, Pos> = { ArrowUp: { row: row - 1, col }, ArrowDown: { row: row + 1, col }, ArrowLeft: { row, col: col - 1 }, ArrowRight: { row, col: col + 1 } };
     if (event.altKey && keys[event.key]) {
       // Alt and an arrow key resize the column or the row of the cell. A double click on a header edge resets the size.
@@ -235,6 +258,8 @@ export function SheetView({ client, book, title, changes, presence, connection, 
     } else if (keys[event.key]) {
       event.preventDefault();
       move(keys[event.key]);
+    } else if (readOnly && event.altKey) {
+      return;
     } else if (event.key === "Enter" || event.key === "F2") {
       event.preventDefault();
       setDraft({ text: rawAt(sel), where: "cell" });
@@ -282,9 +307,10 @@ export function SheetView({ client, book, title, changes, presence, connection, 
     }
   }
 
-  async function structure(what: string, run: () => Promise<unknown>) {
+  async function structure(what: string, run: () => Promise<unknown>, shift?: () => void) {
     try {
       await run();
+      shift?.();
       await load(active, true);
       refocus.current = true;
       setSel({ ...sel });
@@ -346,11 +372,19 @@ export function SheetView({ client, book, title, changes, presence, connection, 
       )}
       {data !== null && (
         <>
+          <div className="as-row as-toolbar">
           <div role="group" aria-label="Rows and columns" className="as-row as-tools">
-            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not insert the row", () => client.insertRows({ ...sheetTarget, at: sel.row }))}>Insert row</Button>
-            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not delete the row", () => client.deleteRows({ ...sheetTarget, at: sel.row }))}>Delete row</Button>
-            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not insert the column", () => client.insertCols({ ...sheetTarget, at: sel.col }))}>Insert column</Button>
-            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not delete the column", () => client.deleteCols({ ...sheetTarget, at: sel.col }))}>Delete column</Button>
+            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not insert the row", () => client.insertRows({ ...sheetTarget, at: sel.row }), () => shiftSizes("rows", sel.row, 1))}>Insert row</Button>
+            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not delete the row", () => client.deleteRows({ ...sheetTarget, at: sel.row }), () => shiftSizes("rows", sel.row, -1))}>Delete row</Button>
+            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not insert the column", () => client.insertCols({ ...sheetTarget, at: sel.col }), () => shiftSizes("cols", sel.col, 1))}>Insert column</Button>
+            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not delete the column", () => client.deleteCols({ ...sheetTarget, at: sel.col }), () => shiftSizes("cols", sel.col, -1))}>Delete column</Button>
+          </div>
+          <div role="group" aria-label="Size" className="as-row as-tools">
+            <Button size="sm" variant="ghost" onClick={() => resize("cols", sel.col, colWidth(sel.col) + 24)}>Widen column</Button>
+            <Button size="sm" variant="ghost" onClick={() => resize("cols", sel.col, colWidth(sel.col) - 24)}>Narrow column</Button>
+            <Button size="sm" variant="ghost" onClick={() => resize("rows", sel.row, rowHeight(sel.row) + 8)}>Taller row</Button>
+            <Button size="sm" variant="ghost" onClick={() => resize("rows", sel.row, rowHeight(sel.row) - 8)}>Shorter row</Button>
+          </div>
           </div>
           <div className="as-bar">
             <span className="as-namebox"><span className="as-sr-only">Selected cell </span>{here}</span>
@@ -368,6 +402,7 @@ export function SheetView({ client, book, title, changes, presence, connection, 
               onBlur={(e) => draft?.where === "bar" && e.relatedTarget !== null && void commit(draft.text, sel)}
             />
           </div>
+          <span className="as-sr-only" role="status">{note}</span>
           <div className="as-frame">
             <div className="as-scroller">
               <table ref={grid} role="grid" aria-readonly={readOnly || undefined} className="as-grid" aria-label={`${active}, spreadsheet`} aria-rowcount={data.rows} aria-colcount={data.cols} style={{ width: ROW_HEAD + Array.from({ length: data.cols }, (_, c) => colWidth(c + 1)).reduce((a, b) => a + b, 0) }}>
@@ -433,7 +468,7 @@ export function SheetView({ client, book, title, changes, presence, connection, 
                 </tbody>
               </table>
             </div>
-            {data.blank && <p className="as-blank">This sheet is empty. Select a cell and type. Start a formula with =.</p>}
+            {data.blank && draft === null && <p className="as-blank">This sheet is empty. Select a cell and type. Start a formula with =.</p>}
           </div>
           <nav className="as-row as-tabs" aria-label="Sheets">
             {sheets.map((name) => (

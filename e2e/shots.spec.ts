@@ -10,6 +10,7 @@ async function open(page: Page, book: string, theme: "light" | "dark") {
   await page.setViewportSize({ width: 1200, height: 700 });
   await page.emulateMedia({ colorScheme: theme, reducedMotion: "reduce" });
   await page.goto("/");
+  await page.getByLabel("API key").or(page.getByLabel("Theme")).first().waitFor();
   if (await page.getByLabel("API key").isVisible()) {
     await page.getByLabel("API key").fill(ANA);
     await page.getByRole("button", { name: "Sign in" }).click();
