@@ -92,6 +92,17 @@ function newIds(doc: Y.Doc, count: number): string[] {
   return Array.from({ length: count }, (_, i) => `${doc.clientID.toString(36)}.${(first + i).toString(36)}`);
 }
 
+// A key in the old form has an A1 address before the colon, and no bar. Other keys are not cells.
+const oldKey = (key: string): boolean => {
+  if (key.includes("|")) return false;
+  try {
+    parseCell(key.slice(0, Math.max(0, key.indexOf(":"))));
+    return true;
+  } catch {
+    return false;
+  }
+};
+
 export class Workbook {
   readonly doc: Y.Doc;
   private readonly sheets: Y.Array<YSheet>;
@@ -99,12 +110,17 @@ export class Workbook {
   // workbook clears both.
   private layouts = new Map<YSheet, Partial<Record<Axis, Layout>>>();
   private readonly shown = new Map<string, string>();
+  // True when a sheet that has an id holds a cell key in the old A1 form. Such a cell reads as empty.
+  // On purpose, the flag stays set until the workbook is loaded again.
+  private oldKeys = false;
 
   constructor(doc: Y.Doc = new Y.Doc()) {
     this.doc = doc;
     this.sheets = doc.getArray("sheets");
-    // A write to a cell or a width changes neither the order nor the names, so it keeps both caches.
+    this.checkKeys();
     this.sheets.observeDeep((events) => {
+      for (const event of events) this.watchKeys(event);
+      // A write to a cell or a width changes neither the order nor the names, so it keeps both caches.
       if (events.some(({ path }) => !(path.length === 2 && (path[1] === "cells" || path[1] === "widths")))) this.invalidate();
     });
     this.migrate();
@@ -114,11 +130,45 @@ export class Workbook {
   // order for the same sheets, and the merge keeps one of them, so row edits made after the
   // conversion can be lost, rows can read in the wrong place, and two sheets can share an id.
   // Every read and write throws until the workbook is loaded again from one copy.
+  // A sheet that comes without an id after a conversion is tagged by its name, so one copy that
+  // converts it is no clash, and two copies that convert the same sheet are.
   conversionClash(): boolean {
-    return this.doc.getMap("conversions").size > 1;
+    const late = new Set<string>();
+    let full = 0;
+    for (const tag of this.doc.getMap("conversions").keys()) {
+      if (!tag.startsWith("late:")) full += 1;
+      else if (late.has(tag.slice(5, tag.lastIndexOf(":")))) return true;
+      else late.add(tag.slice(5, tag.lastIndexOf(":")));
+    }
+    return full > 1;
+  }
+
+  // A sheet that has an id is in the new form. A cell key in the old form on it would read as empty,
+  // so the workbook refuses every read and write instead.
+  private checkKeys(sheets: Iterable<YSheet> = this.sheets): void {
+    for (const sheet of sheets) {
+      if (sheet.has("id") && [...this.cells(sheet).keys()].some(oldKey)) this.oldKeys = true;
+    }
+  }
+
+  // The same check for a change that arrives after the load: a key in a cells map, a cells map that
+  // is replaced, or a sheet that is added.
+  private watchKeys(event: Y.YEvent<any>): void {
+    const { path } = event;
+    if (event instanceof Y.YArrayEvent && path.length === 0) {
+      for (const item of event.changes.added) this.checkKeys(item.content.getContent().filter((v): v is YSheet => v instanceof Y.Map));
+    } else if (event instanceof Y.YMapEvent && path.length === 1 && (event.keysChanged.has("cells") || event.keysChanged.has("id"))) {
+      const sheet = this.sheets.get(path[0] as number);
+      if (sheet !== undefined) this.checkKeys([sheet]);
+    } else if (event instanceof Y.YMapEvent && path.length === 2 && path[1] === "cells" && this.sheets.get(path[0] as number)?.has("id")) {
+      for (const key of event.keysChanged) if (event.target.has(key) && oldKey(key)) this.oldKeys = true;
+    }
   }
 
   private usable(): void {
+    if (this.oldKeys) {
+      throw new SheetError("a sheet in this workbook holds a cell key in the old A1 form, so those cells would read as empty; restore the workbook from a copy saved before that key arrived");
+    }
     if (this.sheets.toArray().some((sheet) => !sheet.has("id"))) {
       throw new SheetError("this workbook has a sheet in the old A1 form; load it with Workbook.fromState so it converts");
     }
@@ -163,11 +213,27 @@ export class Workbook {
   }
 
   private convert(all: YSheet[], legacy: YSheet[]): void {
+    // The stored form marks refs with U+0001 and U+0002. A formula that holds either would read as a
+    // ref after the conversion. Check before any change, so a refusal leaves the workbook as it was.
+    for (const sheet of legacy) {
+      if (typeof sheet.get("name") !== "string") throw new SheetError("a sheet in the old A1 form has no name, so it cannot convert");
+      for (const [key, value] of this.cells(sheet)) {
+        if (key.endsWith(":c") && isFormula(value) && hasControl(value)) {
+          throw new SheetError(`cell ${key.slice(0, -2)} on sheet "${sheet.get("name")}" holds a formula with a control character (U+0001 or U+0002), which the conversion cannot keep; remove the character in the version that saved it, then load it again`);
+        }
+      }
+    }
     this.doc.transact(() => {
       // The client id is in each sheet id, so sheets from two conversions never share one. The colon
       // keeps a converted id apart from the ids that newIds makes, which use a dot.
       const prefix = this.doc.clientID.toString(36);
-      this.doc.getMap("conversions").set(prefix, true);
+      // A workbook that was converted before has its tag. A sheet that came without an id after
+      // that gets a tag with its own name, so the workbook does not read as a clash until a second
+      // copy converts the same sheet.
+      const tags = this.doc.getMap("conversions");
+      if ([...tags.keys()].some((tag) => !tag.startsWith("late:"))) {
+        for (const sheet of legacy) tags.set(`late:${(sheet.get("name") as string).toLowerCase()}:${prefix}`, true);
+      } else tags.set(prefix, true);
       all.forEach((sheet, i) => sheet.has("id") || sheet.set("id", `${prefix}:s${i}`));
       const idOf = (name: string) => all.find((sheet) => sameSheet(sheet.get("name") as string, name))?.get("id") as string | undefined;
       for (const sheet of legacy) {
