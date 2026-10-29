@@ -13,6 +13,7 @@ import { column, exchange, fork, grid, race, snapshot } from "../testing/replica
 // - two copies that both migrate disagree, or merging them adds or drops a cell
 // - a migrated workbook still loses a write that races an insert
 // - migrating a second time changes the workbook
+// - two copies that each convert, and then edit before they merge, lose a value, an insert, or a write
 
 const stampOf = (id: string, kind: string) => ({ id, kind, at: "2026-01-02T03:04:05.000Z" });
 
@@ -100,6 +101,17 @@ describe("a workbook saved with A1 keys", () => {
     expect(a.doc.getArray("sheets").toJSON()).toEqual(before);
     expect(b.doc.getArray("sheets").toJSON()).toEqual(before);
     expect(snapshot(a)).toEqual(snapshot(b));
+  });
+
+  test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("copies that each convert and then edit keep every edit (client ids %j)", async (ids) => {
+    const state = legacyState();
+    const [a, b] = [fork(state, ids[0]), fork(state, ids[1])];
+    a.writeRange("Sheet1", "A1", [[555]], { id: "u2", kind: "human" });
+    exchange(a, b);
+    expect(column(b, "A", 1)).toEqual([555]);
+    await race(a, b, (w) => (w.insertRows("Sheet1", 1, 1), w.writeRange("Sheet1", "A1", [["new"]], { id: "u2", kind: "human" })), (w) => w.writeRange("Sheet1", "A2", [[99]], { id: "u3", kind: "human" }));
+    expect(snapshot(a)).toEqual(snapshot(b));
+    expect(column(a, "A", 4)).toEqual(["new", 555, 99, "text"]);
   });
 
   test("a write that races an insert follows its row", async () => {
