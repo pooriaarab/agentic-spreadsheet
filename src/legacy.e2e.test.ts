@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -77,11 +77,16 @@ describe("a stored old workbook", () => {
   test("every read command saves nothing", async () => {
     expect(Object.keys(READS).sort()).toEqual(OPS.filter((op) => op.readOnly).map((op) => op.name).sort());
     putFile("old", legacyState());
+    // The bytes of the stored file and the files in the directory, before any read.
+    const file = join(dir, "workbooks", "old.json");
+    const before = { bytes: readFileSync(file, "utf8"), files: readdirSync(dir, { recursive: true }).sort() };
     for (const [name, args] of Object.entries(READS)) {
       const r = cli(...args);
       expect([name, r.code, r.err]).toEqual([name, 0, ""]);
       expect([name, existsSync(join(dir, "store.json"))]).toEqual([name, false]);
-      expect([name, (await stored("old")).every((sheet) => sheet.id === undefined)]).toEqual([name, true]);
+      const sheets = await stored("old");
+      expect([name, sheets.length, sheets.every((sheet) => sheet.id === undefined)]).toEqual([name, 2, true]);
+      expect([name, readFileSync(file, "utf8"), readdirSync(dir, { recursive: true }).sort()]).toEqual([name, before.bytes, before.files]);
     }
   });
 
