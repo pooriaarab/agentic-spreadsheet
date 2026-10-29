@@ -54,6 +54,8 @@ export interface SheetInfo {
   columnWidths: Record<string, number>;
 }
 
+export type Change = { all: true } | { all?: false; cells: { sheet: string; address: string }[] };
+
 export class SheetError extends Error {
   constructor(message: string) {
     super(message);
@@ -220,6 +222,29 @@ export class Workbook {
         toCell(cells, formatCell({ col: span.c1 + dc, row: span.r1 + dr })),
       ),
     );
+  }
+
+  // Tell a listener which cells changed content, or that anything may have changed. A change to
+  // a format, a width, or an editor stamp does not count. The formula engine uses this to
+  // recompute only what a change reaches, whether it came from here or from another copy.
+  onChange(listener: (change: Change) => void): () => void {
+    const handler = (events: Y.YEvent<any>[]) => {
+      const cells: { sheet: string; address: string }[] = [];
+      for (const event of events) {
+        const { path } = event;
+        const keys = event instanceof Y.YMapEvent ? [...event.keysChanged] : [];
+        if (path.length === 2 && path[1] === "cells") {
+          const sheet = this.sheets.get(path[0] as number)?.get("name") as string | undefined;
+          if (sheet === undefined) return listener({ all: true });
+          for (const key of keys) if (key.endsWith(":c")) cells.push({ sheet, address: key.slice(0, -2) });
+        } else if (path.length === 1 ? keys.includes("name") : path[1] !== "widths") {
+          return listener({ all: true });
+        }
+      }
+      if (cells.length > 0) listener({ cells });
+    };
+    this.sheets.observeDeep(handler);
+    return () => this.sheets.unobserveDeep(handler);
   }
 
   // A cell's content and nothing else. The formula engine reads cells through this.
