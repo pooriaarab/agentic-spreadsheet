@@ -5,6 +5,20 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-29
+
+### Changed
+
+- The principal kinds come from `agentic-identity` 0.6.0. The list is `human`, `agent_of_human`, `agent_of_agent`,
+  `agent`, and `user_token`. `human` and `agent` take no parent. The other three need a parent of a kind they may act
+  for. The copy of the list in the core is removed. The public API is the same: `PRINCIPAL_KINDS` and `PrincipalKind`
+  are still exported.
+
+### Documentation
+
+- The README auth section states the key length limit (512 characters at most) and the parent rule for `human` and
+  `agent`.
+
 ## [0.7.0] - 2026-10-29
 
 ### Added

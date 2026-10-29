@@ -177,9 +177,10 @@ curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/
 The key sets who writes, so a body cannot name another principal. The Worker reads each request through the
 `Auth` port of `agentic-identity`. On start, it writes the keys of `SHEETS_API_KEYS` into the store as principals
 and credentials. The store holds the hash of a key, never the key. A key has 32 bytes or more, with only letters,
-digits, `_` and `-`, and each needs an id and a kind. A kind that acts for another principal
-(`agent_of_human`, `agent_of_agent`, `user_token`) needs a `parent`, the id of another entry. An entry can also set
-`scopes`, such as `["workbook:read"]`: the key then cannot write, whatever its role on a workbook.
+digits, `_` and `-`, at most 512 characters, and each needs an id and a kind. A kind that acts for another principal
+(`agent_of_human`, `agent_of_agent`, `user_token`) needs a `parent`, the id of another entry. `human` and `agent`
+take no parent. An entry can also set `scopes`, such as `["workbook:read"]`: the key then cannot write, whatever its
+role on a workbook.
 A key that you remove from the env stops working in that Worker at once (its hash stays in the store until you
 revoke it with `agentic-identity`). Use random keys, for example the output of `openssl rand -hex 32`. Each key has its own id.
 A session cookie is not a credential. A missing or bad key gets 401.

@@ -1,6 +1,6 @@
 {
   "name": "agentic-spreadsheet",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Spreadsheets with formulas that people and agents edit together.",
   "keywords": [
     "spreadsheet",
