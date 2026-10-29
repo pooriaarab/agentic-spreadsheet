@@ -8,15 +8,28 @@ export interface Remote {
   token: string;
 }
 
+// A fault in how sharing is set up, not a refusal from the Worker. The CLI exits 2 for it.
+export class SetupError extends Error {}
+
 // SHEET_URL names the Worker and SHEET_TOKEN is the credential. A URL with no token is an error.
 export function remoteFromEnv(env: Record<string, string | undefined>): Remote | undefined {
   const { SHEET_URL: url = "", SHEET_TOKEN: token = "" } = env;
   if (url === "") return undefined;
-  if (token === "") throw new Error("sharing needs SHEET_TOKEN, the credential for the Worker at SHEET_URL");
+  if (token === "") throw new SetupError("sharing needs SHEET_TOKEN, the credential for the Worker at SHEET_URL");
+  // The key goes in a header, so only a loopback host may use plain http.
+  let parsed: URL;
+  try {
+    parsed = new URL(url);
+  } catch {
+    throw new SetupError("SHEET_URL must be an absolute URL");
+  }
+  const loopback = ["localhost", "127.0.0.1", "[::1]"].includes(parsed.hostname);
+  if (parsed.protocol !== "https:" && !(parsed.protocol === "http:" && loopback)) throw new SetupError("SHEET_URL must use https, except for a loopback host");
   return { url, token };
 }
 
 const book = z.string().min(1).describe("Workbook id.");
+const cursor = z.string().optional().describe("The nextCursor of the last page.");
 const subject = z.string().min(1).describe("The id of the person or agent.");
 const subjectKind = z.enum(SUBJECT_KIND_NAMES).describe("A person (human) and an agent with one id hold separate roles.");
 
@@ -31,15 +44,15 @@ export interface ShareOp {
 
 export const SHARE_OPS: ShareOp[] = [
   {
-    name: "share", description: "Give a person or an agent a role on a workbook, through the Worker. Owner only.", args: ["book"],
+    name: "share", description: "Give a person or an agent a role on a workbook, through the Worker. Owner only. The workbook must exist on the Worker: the other tools use the local store.", args: ["book"],
     shape: { book, subject, subjectKind, role: z.enum(SHARE_ROLES).describe("viewer, commenter, or editor.") },
     run: (a: { book: string; subject: string; subjectKind: "human" | "agent"; role: "viewer" | "commenter" | "editor" }, client) =>
       client.share({ book: a.book, kind: a.subjectKind, subject: a.subject, role: a.role }),
   },
   {
-    name: "shares", description: "List the roles on a workbook, through the Worker. Owner only. Subject ids are hashes.", args: ["book"],
-    shape: { book }, readOnly: true,
-    run: (a: { book: string }, client) => client.shares({ book: a.book }),
+    name: "shares", description: "List the roles on a workbook, through the Worker. Owner only. Subject ids are hashes. Up to 100 a page: pass nextCursor back as cursor.", args: ["book"],
+    shape: { book, limit: z.coerce.number().int().min(1).max(100).optional().describe("Roles a page, 100 at most."), cursor }, readOnly: true,
+    run: (a: { book: string; limit?: number; cursor?: string }, client) => client.shares(a),
   },
   {
     name: "unshare", description: "Take a role away on a workbook, through the Worker. Owner only.", args: ["book"],

@@ -83,7 +83,7 @@ describe("sharing from the CLI", () => {
   test("it needs a Worker and a token: exit 2, and the token is never printed", () => {
     expect(cli(undefined, "share", "b", "--subject", "vic", "--subject-kind", "human", "--role", "viewer")).toMatchObject({ code: 2 });
     const noToken = spawnSync(process.execPath, [CLI, "shares", "b"], { encoding: "utf8", env: { ...env(), SHEET_URL: url } });
-    expect(noToken.status).toBe(1);
+    expect(noToken.status).toBe(2);
     expect(noToken.stderr).toContain("SHEET_TOKEN");
     const bad = cli(KEY_OWNER, "share", "b", "--subject", "vic", "--subject-kind", "robot", "--role", "viewer");
     expect(bad.code).toBe(1);
@@ -104,6 +104,26 @@ describe("sharing from the CLI", () => {
     const again = cli(KEY_OWNER, "unshare", "plan", "--subject", "vic", "--subject-kind", "human");
     expect(again.code).toBe(1);
     expect(again.err).toContain("no share");
+  });
+
+  test("plain http to a remote host is refused, and shares page", async () => {
+    const plain = spawnSync(process.execPath, [CLI, "shares", "b"], { encoding: "utf8", env: { ...env(KEY_OWNER), SHEET_URL: "http://sheets.example.com" } });
+    expect(plain.status).toBe(2);
+    expect(plain.stderr).toContain("https");
+    expect(plain.stderr).not.toContain(KEY_OWNER);
+    await as(KEY_OWNER).create({ book: "page" });
+    for (let i = 0; i < 5; i += 1) await as(KEY_OWNER).share({ book: "page", kind: "human", subject: `p${i}`, role: "viewer" });
+    const seen: string[] = [];
+    let cursor: string | undefined;
+    for (let pages = 0; pages < 10; pages += 1) {
+      const out = JSON.parse(cli(KEY_OWNER, "shares", "page", "--limit", "2", ...(cursor === undefined ? [] : ["--cursor", cursor])).out) as { grants: { subjectHash: string }[]; nextCursor?: string };
+      expect(out.grants.length).toBeLessThanOrEqual(2);
+      seen.push(...out.grants.map((g) => g.subjectHash));
+      cursor = out.nextCursor;
+      if (cursor === undefined) break;
+    }
+    expect(new Set(seen).size).toBe(6); // the owner and five viewers, each once
+    expect(cli(KEY_OWNER, "shares", "page", "--limit", "0").code).toBe(1);
   });
 
   test("a non-owner cannot list or change shares", () => {

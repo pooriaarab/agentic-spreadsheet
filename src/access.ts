@@ -66,8 +66,8 @@ export function createAccess(store: Store) {
       await sharing.grant(await context(who), resource, target, role);
     },
     // The grants on a book, with hashed subject ids: the store never holds a principal id. Only an owner may.
-    async list(who: Principal, book: string): Promise<{ grants: { subjectKind: SubjectKind; subjectHash: string; role: Role }[]; nextCursor?: string }> {
-      const page = await sharing.listGrants(await context(who), await resourceId(book), { limit: 100 });
+    async list(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}): Promise<{ grants: { subjectKind: SubjectKind; subjectHash: string; role: Role }[]; nextCursor?: string }> {
+      const page = await sharing.listGrants(await context(who), await resourceId(book), { limit: paging.limit ?? 100, cursor: paging.cursor });
       return { grants: page.grants.map((g) => ({ subjectKind: g.subjectKind, subjectHash: g.subjectId, role: g.role })), nextCursor: page.nextCursor };
     },
     async unshare(who: Principal, book: string, from: { kind: SubjectKind; id: string }): Promise<void> {

@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { ctxFromEnv } from "./env.js";
 import { message, OPS } from "./ops.js";
-import { remoteFromEnv, runShareOp, SHARE_OPS } from "./remote.js";
+import { remoteFromEnv, runShareOp, SetupError, SHARE_OPS } from "./remote.js";
 import { VERSION } from "./version.js";
 
 const HELP = `agentic-spreadsheet ${VERSION}
@@ -62,7 +62,7 @@ async function main(argv: string[]): Promise<number> {
     return 0;
   } catch (error) {
     console.error(`error: ${message(error)}`);
-    return 1;
+    return error instanceof SetupError ? 2 : 1;
   }
 }
 

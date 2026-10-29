@@ -126,7 +126,9 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   api.get("/:book/shares", async (c) => {
     const denied = await guard(c, "admin", c.req.param("book"));
     if (denied !== null) return denied;
-    return c.json(await access.list(c.get("who"), c.req.param("book")));
+    const query = z.object({ limit: z.coerce.number().int().min(1).max(100).optional(), cursor: z.string().max(512).optional() }).strict().safeParse(c.req.query());
+    if (!query.success) return c.json({ error: message(query.error) }, 400);
+    return c.json(await access.list(c.get("who"), c.req.param("book"), query.data));
   });
   api.delete("/:book/share/:kind/:subject", async (c) => {
     const kind = z.enum(SUBJECT_KIND_NAMES).safeParse(c.req.param("kind"));
