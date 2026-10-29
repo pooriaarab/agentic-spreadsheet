@@ -85,28 +85,6 @@ type Axis = "row" | "col";
 const ORDER_KEY = { row: "rowOrder", col: "colOrder" } as const;
 const GONE_KEY = { row: "rowGone", col: "colGone" } as const;
 const counters = new WeakMap<Y.Doc, number>();
-// The client id for the edits of a conversion. It comes from the content that is converted, not
-// from how a copy stores it, so copies that convert one state make the same edits and Yjs sees one
-// set. Copies that convert different states get different ids, so their edits cannot clash.
-function conversionClient(doc: Y.Doc): number {
-  const text = canonical(doc.getArray("sheets").toJSON());
-  let id = 0x811c9dc5;
-  for (let i = 0; i < text.length; i += 1) id = Math.imul(id ^ text.charCodeAt(i), 0x01000193) >>> 0;
-  const known = Y.decodeStateVector(Y.encodeStateVector(doc));
-  while (id === 0 || known.has(id)) id = (id + 1) >>> 0;
-  return id;
-}
-
-// JSON with the keys of each object in order.
-function canonical(value: unknown): string {
-  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
-  if (typeof value === "object" && value !== null) {
-    const entries = Object.entries(value).filter(([, v]) => v !== undefined).sort(([x], [y]) => (x < y ? -1 : x > y ? 1 : 0));
-    return `{${entries.map(([key, v]) => `${JSON.stringify(key)}:${canonical(v)}`).join(",")}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
 // New ids, unique across every copy of the workbook: the client id of this copy, then a count.
 function newIds(doc: Y.Doc, count: number): string[] {
   const first = counters.get(doc) ?? 0;
@@ -132,7 +110,7 @@ export class Workbook {
     this.migrate();
   }
 
-  // True when two copies converted different old states and then merged. Each copy made its own
+  // True when two copies each converted an old workbook and then merged. Each copy made its own
   // order for the same sheets, and the merge keeps one of them, so row edits made after the
   // conversion can be lost, rows can read in the wrong place, and two sheets can share an id.
   // Every read and write throws until the workbook is loaded again from one copy.
@@ -142,7 +120,7 @@ export class Workbook {
 
   private usable(): void {
     if (this.conversionClash()) {
-      throw new SheetError("two copies converted different old states and then merged; load the workbook again from one copy");
+      throw new SheetError("two copies converted an old workbook and then merged; load the workbook again from one copy");
     }
   }
 
@@ -154,20 +132,14 @@ export class Workbook {
   }
 
   // A workbook saved before cells had ids keys its cells by A1 address. Give each row and column
-  // its number as its id, and key the cells by those ids. Copies that convert one state make the
-  // same edits in the same order, as one client. Yjs then sees one set of edits, not one per copy,
-  // so two copies that both convert still merge, and keep what each writes after.
+  // its number as its id, and key the cells by those ids. Each copy that converts makes its own
+  // order for every sheet, and a merge keeps one of them. So the conversion tags the workbook with
+  // the client id of the copy, and two tags mean a clash. Convert once, save, then share.
   private migrate(): void {
     const all = this.sheets.toArray();
     const legacy = all.filter((sheet) => !sheet.has("id"));
     if (legacy.length === 0) return;
-    const own = this.doc.clientID;
-    this.doc.clientID = conversionClient(this.doc);
-    try {
-      this.convert(all, legacy);
-    } finally {
-      this.doc.clientID = own;
-    }
+    this.convert(all, legacy);
   }
 
   private convert(all: YSheet[], legacy: YSheet[]): void {
