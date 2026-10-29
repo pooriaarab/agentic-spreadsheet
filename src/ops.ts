@@ -145,6 +145,17 @@ function edit<T>(ctx: Ctx, id: string, change: (wb: Workbook) => T): Promise<T> 
   });
 }
 
+// Delete a workbook and its stored state. A missing workbook is a 404.
+export async function removeWorkbook(ctx: Ctx, id: string): Promise<void> {
+  const key = await ctx.store.transaction(async (tx) => {
+    const doc = await tx.get(COLLECTION, id);
+    if (doc === null) throw new OpError(`no workbook "${id}"`, 404);
+    await tx.delete(COLLECTION, id);
+    return typeof doc.blob === "string" ? doc.blob : undefined;
+  });
+  if (key !== undefined) await ctx.blobs.delete(key).catch(() => undefined);
+}
+
 function checkWriteSize(ctx: Ctx, rows: unknown[][]): void {
   const cells = rows.reduce<number>((sum, row) => sum + row.length, 0);
   if (ctx.maxWriteCells !== undefined && cells > ctx.maxWriteCells) {

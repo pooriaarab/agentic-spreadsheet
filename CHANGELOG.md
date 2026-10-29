@@ -5,6 +5,20 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-29
+
+### Breaking changes
+
+- `agentic-identity` is now 0.4.0. A role belongs to a kind and an id. A person and an agent with the same id
+  hold separate roles. A role that a 0.2.0 Worker gave to an id does not carry over.
+- `PUT /api/v1/sheets/:book/share` needs a `kind` (`human` or `agent`) in the body. The take-back route is now
+  `DELETE /api/v1/sheets/:book/share/:kind/:subject`. A principal of any kind but `human` is an agent.
+
+### Added
+
+- `DELETE /api/v1/sheets/:book` lets the owner delete a workbook. It also erases the grants, invites, links,
+  and audit entries of the workbook with `deleteResource`, so no grant outlives it.
+
 ## [0.2.0] - 2026-10-29
 
 ### Breaking changes

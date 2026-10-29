@@ -1,11 +1,11 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { z } from "zod";
-import { createAccess, NoShare, SHARE_ROLES, type ShareRole } from "./access.js";
+import { createAccess, NoShare, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
-import { createMemoryBlobs, createMemoryStore, type Blobs, type Store } from "agentic-identity";
-import { message, OpError, OPS } from "./ops.js";
+import { createMemoryBlobs, createMemoryStore, EraseRefusedError, type Blobs, type Store } from "agentic-identity";
+import { message, OpError, OPS, removeWorkbook } from "./ops.js";
 import { VERSION } from "./version.js";
 
 export interface WorkerEnv extends AuthEnv {
@@ -81,22 +81,32 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
     });
   }
   // The owner shares a book with a principal by id, and takes the share back.
-  const shareBody = z.object({ subject: z.string().regex(/^[\w.@:-]{1,128}$/), role: z.enum(SHARE_ROLES) }).strict();
+  const shareBody = z.object({ kind: z.enum(SUBJECT_KIND_NAMES), subject: z.string().regex(/^[\w.@:-]{1,128}$/), role: z.enum(SHARE_ROLES) }).strict();
   api.put("/:book/share", async (c) => {
     const denied = await guard(c.get("who"), "admin", c.req.param("book"));
     if (denied !== null) return denied;
     const parsed = shareBody.safeParse(await c.req.json().catch(() => null));
     if (!parsed.success) return c.json({ error: message(parsed.error) }, 400);
-    await access.share(c.get("who"), c.req.param("book"), parsed.data.subject, parsed.data.role as ShareRole);
+    await access.share(c.get("who"), c.req.param("book"), { kind: parsed.data.kind, id: parsed.data.subject }, parsed.data.role as ShareRole);
     return c.json({ ok: true });
   });
-  api.delete("/:book/share/:subject", async (c) => {
+  api.delete("/:book/share/:kind/:subject", async (c) => {
+    const kind = z.enum(SUBJECT_KIND_NAMES).safeParse(c.req.param("kind"));
+    if (!kind.success) return c.json({ error: "the kind is human or agent" }, 400);
     const denied = await guard(c.get("who"), "admin", c.req.param("book"));
     if (denied !== null) return denied;
-    await access.unshare(c.get("who"), c.req.param("book"), c.req.param("subject")).catch((error: unknown) => {
+    await access.unshare(c.get("who"), c.req.param("book"), { kind: kind.data, id: c.req.param("subject") }).catch((error: unknown) => {
       if (error instanceof NoShare) throw new OpError(error.message, 404);
       throw error;
     });
+    return c.json({ ok: true });
+  });
+  // The owner deletes a book. Its grants, invites, links, and audit entries go with it.
+  api.delete("/:book", async (c) => {
+    const denied = await guard(c.get("who"), "admin", c.req.param("book"));
+    if (denied !== null) return denied;
+    await access.erase(c.get("who"), c.req.param("book"));
+    await removeWorkbook({ store, blobs, principal: () => c.get("who") }, c.req.param("book"));
     return c.json({ ok: true });
   });
   app.route("/api/v1/sheets", api);
@@ -104,6 +114,7 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   app.notFound((c) => c.json({ error: "not found" }, 404));
   // A message from an operation is for the caller. Anything else is a bug: log its name, not its text.
   app.onError((error, c) => {
+    if (error instanceof EraseRefusedError) return c.json({ error: error.message }, 409);
     if (error instanceof OpError) return c.json({ error: error.message }, error.status);
     if (error instanceof SheetError || error.constructor === Error) return c.json({ error: error.message }, 400);
     console.error("sheets api error", error.name);
