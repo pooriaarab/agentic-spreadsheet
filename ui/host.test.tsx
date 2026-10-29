@@ -219,6 +219,44 @@ describe("mount with a host document", () => {
     expect(observers()).toBe(before);
   });
 
+  it("a workbook that fails to convert leaves no observer on the host's document", async () => {
+    // An old workbook (a sheet with no id) whose edit log forks. The conversion refuses it.
+    const doc = new Y.Doc();
+    const old = new Y.Map<unknown>();
+    old.set("name", "Sheet1");
+    doc.getArray("sheets").push([old]);
+    doc.getArray("structure").push([{ id: "a", parent: null }, { id: "b", parent: "x" }]);
+    const observers = () => (doc.getArray("sheets") as unknown as { _dEH: { l: unknown[] } })._dEH.l.length;
+    await show({ host: { doc } });
+    await vi.waitFor(() => expect(element.querySelector('[role="alert"]')?.textContent).toContain("Could not open the sheet"));
+    expect(observers()).toBe(0);
+  });
+
+  it("a read-only sheet does not convert an old workbook, and says why", async () => {
+    const doc = new Y.Doc();
+    const old = new Y.Map<unknown>();
+    old.set("name", "Sheet1");
+    old.set("cells", new Y.Map());
+    doc.getArray("sheets").push([old]);
+    const updates = vi.fn();
+    doc.on("update", updates);
+    await show({ host: { doc }, readOnly: true });
+    await vi.waitFor(() => expect(element.querySelector('[role="alert"]')?.textContent).toContain("old format"));
+    expect(updates).not.toHaveBeenCalled();
+  });
+
+  it("peers go when the host's presence goes", async () => {
+    const { doc } = hostDoc();
+    const { presence, setPeers } = fakePresence();
+    await show({ host: { doc, presence } });
+    await ready();
+    await act(async () => setPeers([{ clientId: 3, name: "Scribe", machine: true, kind: "agent", cursor: "B1", color: "", away: "active" }]));
+    expect(element.querySelector(".ad-stack__summary")?.textContent).toBe("1 agent");
+    await act(async () => mounted!.update({ docId: "budget", principal: ada, host: { doc } }));
+    expect(element.querySelector(".ad-stack__summary")?.textContent ?? "").not.toContain("agent");
+    expect(cell("1,2").getAttribute("aria-label")).not.toContain("also here");
+  });
+
   it("shows the host's connection state", async () => {
     const listeners = new Set<(status: Status) => void>();
     let status: Status = "connected";

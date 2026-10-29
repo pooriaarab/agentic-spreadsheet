@@ -69,6 +69,7 @@ export function usePresence(book: string, token: string | undefined, cursor: str
     return () => {
       stop();
       host.setPresence({ cursor: null });
+      setPeers([]);
     };
   }, [host]);
 

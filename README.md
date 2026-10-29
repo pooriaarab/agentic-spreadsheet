@@ -299,9 +299,11 @@ const sheet = mount(element, {
 - With `presence`, the sheet shows the peers and their cells, and sends its own cursor with `setPresence`. On
   `unmount` it clears its cursor. It never closes your room or your document. Keep the same `presence` object between
   renders: a new one makes the sheet join again, and peers see its cursor blink.
-- While a cell edit is open, the sheet waits to read the document again, so the edit stays on its sheet and cell. If a
-  peer renamed or deleted that sheet, the save fails with a message.
-- A document that the sheet cannot read as a workbook shows "Could not open the sheet" in place of the grid.
+- While a cell edit is open, the sheet waits to read the document again, so the edit stays on its sheet and its A1
+  address. If a peer renamed or deleted that sheet, the save fails with a message. If a peer inserted a row or a column
+  above or left of it, the save goes to the same address, as it does on the client path.
+- A document that the sheet cannot read as a workbook shows "Could not open the sheet" in place of the grid. A workbook
+  in an old format converts when the sheet opens it. A read-only sheet does not convert it and shows why.
 - A workbook with no sheet shows "This workbook has no sheet yet." Your app adds the first sheet.
 - The sheet opens the document again only when `doc` changes. It reads `onStatus` once each time.
 

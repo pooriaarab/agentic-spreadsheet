@@ -119,7 +119,17 @@ export class Workbook {
     this.sheets = doc.getArray("sheets");
     this.checkKeys();
     this.sheets.observeDeep(this.watch);
-    this.migrate();
+    try {
+      this.migrate();
+    } catch (error) {
+      this.dispose(); // a workbook that fails to open leaves nothing on the document
+      throw error;
+    }
+  }
+
+  // True when the document holds a workbook in the old form. Opening it as a Workbook converts it, which writes to it.
+  static needsConversion(doc: Y.Doc): boolean {
+    return doc.getArray<unknown>("sheets").toArray().some((sheet) => sheet instanceof Y.Map && !sheet.has("id"));
   }
 
   private readonly watch = (events: Y.YEvent<Y.AbstractType<unknown>>[]) => {

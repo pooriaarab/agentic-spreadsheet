@@ -11,7 +11,8 @@ All notable changes to this project are listed here. The format follows
   the presence and the status of its room. The sheet reads and writes that document, computes values in the page, and
   does not call a client, poll, or open a presence room. `client` is optional with `host`, and `principal.id` is
   required with it. New option `title`.
-- `Workbook.dispose()` stops a workbook from watching its document.
+- `Workbook.dispose()` stops a workbook from watching its document, and `Workbook.needsConversion(doc)` says if opening a
+  document converts an old workbook. A workbook whose conversion fails no longer leaves an observer on the document.
 
 ## [0.9.0] - 2026-10-29
 

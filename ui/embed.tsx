@@ -84,6 +84,8 @@ function HostedSheet({ host, docId, principal, readOnly, title }: { host: HostWo
   useEffect(() => {
     let book: Workbook;
     try {
+      // Opening an old workbook converts it, which writes to the document. A read-only sheet writes nothing.
+      if (readOnly && Workbook.needsConversion(host.doc)) throw new Error("this workbook is in an old format. Open it once with the right to edit, so it converts");
       book = new Workbook(host.doc); // it throws on a document it cannot read
     } catch (failed) {
       setOpen({ failed, doc: host.doc });
@@ -95,7 +97,7 @@ function HostedSheet({ host, docId, principal, readOnly, title }: { host: HostWo
       engine.dispose();
       book.dispose();
     };
-  }, [host.doc]);
+  }, [host.doc, readOnly]);
   const { kind, name } = principal;
   const id = principal.id!; // checkOptions makes sure a host principal has one
   const ready = open && "book" in open ? open : null;
