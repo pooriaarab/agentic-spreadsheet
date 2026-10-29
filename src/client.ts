@@ -137,6 +137,9 @@ export function createClient({ baseUrl, token, fetch: fetchImpl }: ClientOptions
     /** `PUT /:book/share`. Only the owner may share. */
     share: ({ book: id, ...body }: { book: string; kind: SubjectKind; subject: string; role: ShareRole }, opts: CallOptions = {}) =>
       json<{ ok: true }>("PUT", `${book(id)}/share`, opts, { body }),
+    /** `GET /:book/shares`. Only the owner may list. A subject shows as a hash of its id, and `nextCursor` is set when more grants exist. */
+    shares: ({ book: id }: { book: string }, opts: CallOptions = {}) =>
+      json<{ grants: { subjectKind: SubjectKind; subjectHash: string; role: string }[]; nextCursor?: string }>("GET", `${book(id)}/shares`, opts),
     /** `DELETE /:book/share/:kind/:subject`. */
     unshare: (args: { book: string; kind: SubjectKind; subject: string }, opts: CallOptions = {}) =>
       json<{ ok: true }>("DELETE", `${book(args.book)}/share/${segment(args.kind)}/${segment(args.subject)}`, opts),

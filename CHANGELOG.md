@@ -5,6 +5,11 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Sharing from the CLI and MCP. CLI commands `share`, `shares`, and `unshare`, and MCP tools `sheet_share`, `sheet_shares`, and `sheet_unshare`. They call the Worker, because roles live on the server: set `SHEET_URL` and `SHEET_TOKEN`. A local store has no roles, so the MCP tools exist only with a Worker. A URL with no token starts `mcp` without them and warns on stderr. The Worker has no share links, so there is no command for them.
+- `GET /api/v1/sheets/:book/shares` lists the roles on a workbook (owner only), and the client has `shares`. A subject shows as a hash of its id.
+
 ### Changed
 
 - `createFileStore(dir)` now wraps the file store of `agentic-identity/file`. The copy in this package is gone. A `store.json`

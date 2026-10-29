@@ -13,10 +13,11 @@ Keywords: spreadsheet,sheets,formulas,grid,collaboration,agents,mcp,cli,csv,xlsx
   importFile(format, bytes, book, principal) map a Workbook to and from the file, through agentic-formats.
 - Remote SDK: import { createClient } from "agentic-spreadsheet/client". Calls the Worker API with fetch only.
   One method per route: list, create, read, write, setFormula, insertRows, deleteRows, insertCols,
-  deleteCols, sheets, addSheet, deleteSheet, exportCsv, importCsv, share, unshare, remove, health.
+  deleteCols, sheets, addSheet, deleteSheet, exportCsv, importCsv, share, shares, unshare, remove, health.
   A failed call throws SheetsApiError with status and code (bad_request, unauthorized, forbidden,
   not_found, conflict, too_large, server_error, or unknown for another status). No retries. Pass
   { signal } to cancel.
+- CLI and MCP sharing: share, shares, and unshare (MCP: sheet_share, sheet_shares, sheet_unshare) call a Worker. Set SHEET_URL and SHEET_TOKEN. A share takes --subject and --subject-kind (human or agent) and --role. There are no share links.
 - Mountable UI: import { mount } from "agentic-spreadsheet/ui" and import "agentic-spreadsheet/ui.css".
   mount(element, { client, docId, principal: { kind, name }, readOnly?, token?, onUnauthorized? }) renders the
   sheet into the element and returns { update(options), unmount() }. A principal without a known kind throws

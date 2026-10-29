@@ -136,6 +136,20 @@ npx agentic-spreadsheet mcp                 # MCP server on stdio
 The CLI and the MCP server share one list of operations: `new`, `list`, `read`, `write`,
 `formula`, `insert-rows`, `delete-rows`, `insert-cols`, `delete-cols`, `sheets`, `add-sheet`, `delete-sheet`,
 `export` (CSV), `import`. MCP tool names start with `sheet_`.
+
+To share a workbook, use a Worker. A local store has no roles, so these commands need `SHEET_URL` and the key of the owner in `SHEET_TOKEN`. Use an `https` URL: the key goes in a header.
+
+```sh
+export SHEET_URL=https://sheets.example.com SHEET_TOKEN=<key>
+npx agentic-spreadsheet share budget --subject ana --subject-kind human --role editor   # give a role (owner only)
+npx agentic-spreadsheet shares budget                                                   # list the roles (owner only)
+npx agentic-spreadsheet unshare budget --subject ana --subject-kind human               # take it away
+```
+
+The role is `viewer`, `commenter`, or `editor`. `--kind` is the kind of a writer, so a share uses `--subject-kind`.
+`shares` shows each subject as a hash of its id, because the store never keeps the id. A refused call prints
+`error: <message>` and exits 1. The Worker has no share links: share with named people and agents. With the same
+two variables, `mcp` also has `sheet_share`, `sheet_shares`, and `sheet_unshare`. Without them, these tools do not exist.
 A write needs `--as <id>` and `--kind <kind>` (or `SHEET_AS` and `SHEET_KIND`). There is no default
 kind. An agent sets `agent`, `agent_of_human`, or `agent_of_agent`. A read needs neither.
 `import` takes `--as-text`: a cell that starts with `=` stays text. Use it for CSV you do not trust.
@@ -193,6 +207,7 @@ curl -H "authorization: Bearer <your-key>" 'localhost:8787/api/v1/sheets/budget/
 | `POST /:book/cols` and `DELETE /:book/cols?at=&count=` | `insert-cols` and `delete-cols` (`at` is a column number, A is 1) |
 | `GET /:book/sheets`, `POST /:book/sheets`, and `DELETE /:book/sheets/:name` | `sheets`, `add-sheet`, and `delete-sheet` |
 | `GET /:book/export` and `POST /:book/import` | `export` (CSV) and `import` |
+| `GET /:book/shares` | List the roles on the workbook (owner only). A subject shows as a hash |
 | `PUT /:book/share` and `DELETE /:book/share/:kind/:subject` | Give a person (`human`) or an agent (`agent`) a role (`viewer`, `commenter`, `editor`), and take it back |
 | `DELETE /:book` | The owner deletes the workbook, and its grants, invites, links, and audit entries go with it |
 

@@ -65,6 +65,11 @@ export function createAccess(store: Store) {
       if ((await store.get("grants", `${resource}:${target.kind}:${target.id}`))?.role === "owner") throw new Error("an owner keeps the owner role");
       await sharing.grant(await context(who), resource, target, role);
     },
+    // The grants on a book, with hashed subject ids: the store never holds a principal id. Only an owner may.
+    async list(who: Principal, book: string): Promise<{ grants: { subjectKind: SubjectKind; subjectHash: string; role: Role }[]; nextCursor?: string }> {
+      const page = await sharing.listGrants(await context(who), await resourceId(book), { limit: 100 });
+      return { grants: page.grants.map((g) => ({ subjectKind: g.subjectKind, subjectHash: g.subjectId, role: g.role })), nextCursor: page.nextCursor };
+    },
     async unshare(who: Principal, book: string, from: { kind: SubjectKind; id: string }): Promise<void> {
       const [resource, target] = [await resourceId(book), await subject(from.kind, from.id)];
       // Revoking a share that does not exist must not look like success.
