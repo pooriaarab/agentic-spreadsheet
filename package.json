@@ -43,6 +43,11 @@
       "types": "./dist/client.d.ts",
       "import": "./dist/client.js"
     },
+    "./ui": {
+      "types": "./dist/embed.d.ts",
+      "import": "./dist/embed.js"
+    },
+    "./ui.css": "./dist/embed.css",
     "./worker": {
       "types": "./dist/worker.d.ts",
       "import": "./dist/worker.js"
@@ -65,7 +70,9 @@
   "dependencies": {
     "@formulajs/formulajs": "^4.6.1",
     "@modelcontextprotocol/sdk": "^1.12.0",
+    "agentic-design": "^0.2.0",
     "agentic-identity": "^0.5.0",
+    "agentic-realtime": "^0.3.0",
     "hono": "^4.13.14",
     "yjs": "^13.6.0",
     "zod": "^3.25.0"
@@ -77,8 +84,7 @@
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
     "@vitejs/plugin-react": "^5.2.0",
-    "agentic-design": "^0.2.0",
-    "agentic-realtime": "^0.3.0",
+    "jsdom": "^26.1.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "tsup": "^8.0.0",
@@ -86,5 +92,17 @@
     "vite": "^7.3.7",
     "vitest": "^3.0.0",
     "wrangler": "^4.155.0"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
   }
 }

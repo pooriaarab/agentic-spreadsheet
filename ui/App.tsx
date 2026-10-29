@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react
 import { AppShell, Button, Dialog, EmptyState, Input, Select, SidebarNav, useTheme, type ThemePreference } from "agentic-design/react";
 import { SheetsApiError } from "../src/client.js";
 import { clientFor, errorText, getToken, isUnauthorized, setToken } from "./session.js";
-import { SheetView } from "./SheetView.js";
+import { WorkbookView } from "./embed.js";
 
 const bookFromHash = (): string | null => {
   const id = decodeURIComponent(location.hash.replace(/^#\//, ""));
@@ -136,7 +136,7 @@ export function App() {
           />
         </section>
       )}
-      {book !== null && <SheetView key={book} client={client} book={book} token={token} onUnauthorized={() => signOut("That key is not valid. Try another.")} />}
+      {book !== null && <WorkbookView key={book} client={client} docId={book} principal={{ kind: "human", name: "Me" }} token={token} onUnauthorized={() => signOut("That key is not valid. Try another.")} />}
     </AppShell>
   );
 }

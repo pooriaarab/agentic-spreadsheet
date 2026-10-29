@@ -22,7 +22,19 @@ interface Draft {
 
 const POLL_MS = 4000;
 
-export function SheetView({ client, book, token, onUnauthorized }: { client: SheetsClient; book: string; token: string; onUnauthorized: () => void }) {
+export interface SheetViewProps {
+  client: SheetsClient;
+  book: string;
+  /** The key for the live presence room. Without it the view runs without presence. */
+  token?: string;
+  /** Name shown to others in the presence room. */
+  name?: string;
+  /** Show the cells but allow no edit. The server still checks every write. */
+  readOnly?: boolean;
+  onUnauthorized: () => void;
+}
+
+export function SheetView({ client, book, token, name = "Me", readOnly = false, onUnauthorized }: SheetViewProps) {
   const toast = useToast();
   const [sheets, setSheets] = useState<string[]>([]);
   const [active, setActive] = useState<string | null>(null);
@@ -35,7 +47,7 @@ export function SheetView({ client, book, token, onUnauthorized }: { client: She
   const grid = useRef<HTMLTableElement>(null);
   const refocus = useRef(false);
   const request = useRef(0);
-  const { peers, live } = usePresence(book, token, address(sel));
+  const { peers, live } = usePresence(book, token, address(sel), name);
 
   const fail = useCallback(
     (error: unknown, what: string) => {
@@ -114,6 +126,8 @@ export function SheetView({ client, book, token, onUnauthorized }: { client: She
   function onCellKey(event: KeyboardEvent<HTMLTableCellElement>) {
     if (data === null || event.target !== event.currentTarget) return;
     const { row, col } = sel;
+    const writes = event.key === "Enter" || event.key === "F2" || event.key === "Delete" || event.key === "Backspace" || (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey);
+    if (readOnly && writes) return;
     const keys: Record<string, Pos> = { ArrowUp: { row: row - 1, col }, ArrowDown: { row: row + 1, col }, ArrowLeft: { row, col: col - 1 }, ArrowRight: { row, col: col + 1 } };
     if (keys[event.key]) {
       event.preventDefault();
@@ -234,29 +248,30 @@ export function SheetView({ client, book, token, onUnauthorized }: { client: She
                 {name}
               </Button>
             ))}
-            <Button size="sm" variant="ghost" onClick={() => (setSheetError(undefined), setDialog("add"))}>Add sheet</Button>
-            <Button size="sm" variant="ghost" disabled={sheets.length < 2} onClick={() => setDialog("delete")}>Delete sheet</Button>
+            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => (setSheetError(undefined), setDialog("add"))}>Add sheet</Button>
+            <Button size="sm" variant="ghost" disabled={readOnly || sheets.length < 2} onClick={() => setDialog("delete")}>Delete sheet</Button>
           </nav>
           <div role="group" aria-label="Rows and columns" className="row">
-            <Button size="sm" variant="secondary" onClick={() => void structure("Could not insert the row", () => client.insertRows({ ...sheetTarget, at: sel.row }))}>Insert row</Button>
-            <Button size="sm" variant="secondary" onClick={() => void structure("Could not delete the row", () => client.deleteRows({ ...sheetTarget, at: sel.row }))}>Delete row</Button>
-            <Button size="sm" variant="secondary" onClick={() => void structure("Could not insert the column", () => client.insertCols({ ...sheetTarget, at: sel.col }))}>Insert column</Button>
-            <Button size="sm" variant="secondary" onClick={() => void structure("Could not delete the column", () => client.deleteCols({ ...sheetTarget, at: sel.col }))}>Delete column</Button>
+            <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not insert the row", () => client.insertRows({ ...sheetTarget, at: sel.row }))}>Insert row</Button>
+            <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not delete the row", () => client.deleteRows({ ...sheetTarget, at: sel.row }))}>Delete row</Button>
+            <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not insert the column", () => client.insertCols({ ...sheetTarget, at: sel.col }))}>Insert column</Button>
+            <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not delete the column", () => client.deleteCols({ ...sheetTarget, at: sel.col }))}>Delete column</Button>
           </div>
           <div className="bar">
             <span className="namebox"><span className="sr-only">Selected cell </span>{here}</span>
             <Input
               label="Formula bar"
               autoComplete="off"
+              readOnly={readOnly}
               value={draft?.text ?? rawAt(sel)}
-              onFocus={() => draft === null && setDraft({ text: rawAt(sel), where: "bar" })}
+              onFocus={() => !readOnly && draft === null && setDraft({ text: rawAt(sel), where: "bar" })}
               onChange={(e) => setDraft({ text: e.target.value, where: "bar" })}
               onKeyDown={onBarKey}
               onBlur={(e) => draft?.where === "bar" && e.relatedTarget !== null && void commit(draft.text, sel)}
             />
           </div>
           <div className="scroller">
-            <table ref={grid} role="grid" className="grid" aria-label={`${active}, spreadsheet`} aria-rowcount={data.rows} aria-colcount={data.cols}>
+            <table ref={grid} role="grid" aria-readonly={readOnly || undefined} className="grid" aria-label={`${active}, spreadsheet`} aria-rowcount={data.rows} aria-colcount={data.cols}>
               <thead>
                 <tr>
                   <th scope="col" className="corner"><span className="sr-only">Row</span></th>
