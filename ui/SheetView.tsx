@@ -249,7 +249,13 @@ export function SheetView({ client, book, title, changes, presence, connection, 
     const writes = event.key === "Enter" || event.key === "F2" || event.key === "Delete" || event.key === "Backspace" || (event.key.length === 1 && !event.ctrlKey && !event.metaKey);
     if (readOnly && writes && !event.altKey) return;
     const keys: Record<string, Pos> = { ArrowUp: { row: row - 1, col }, ArrowDown: { row: row + 1, col }, ArrowLeft: { row, col: col - 1 }, ArrowRight: { row, col: col + 1 } };
-    if (event.altKey && keys[event.key]) {
+    if (event.altKey && event.key === "0") {
+      // Alt and 0 reset the column and the row of the cell to the default size.
+      event.preventDefault();
+      resize("cols", col);
+      resize("rows", row);
+      setNote(`Column ${colLetters(col)} and row ${row}, default size`);
+    } else if (event.altKey && keys[event.key]) {
       // Alt and an arrow key resize the column or the row of the cell. A double click on a header edge resets the size.
       event.preventDefault();
       const step = event.key === "ArrowUp" || event.key === "ArrowLeft" ? -8 : 8;
@@ -480,7 +486,7 @@ export function SheetView({ client, book, title, changes, presence, connection, 
             <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => (setSheetError(undefined), setDialog("add"))}>Add sheet</Button>
             <Button size="sm" variant="ghost" disabled={readOnly || sheets.length < 2} onClick={() => setDialog("delete")}>Delete sheet</Button>
           </nav>
-          <p className="as-muted as-legend"><BotIcon className="as-mark" aria-hidden="true" /> A cell with this mark was written by an agent. Arrow keys move{readOnly ? ", Tab moves on. This sheet is read only." : ", Enter edits, Escape cancels, Tab moves on. Alt with an arrow key resizes."}</p>
+          <p className="as-muted as-legend"><BotIcon className="as-mark" aria-hidden="true" /> A cell with this mark was written by an agent. Arrow keys move{readOnly ? ", Tab moves on. This sheet is read only." : ", Enter edits, Escape cancels, Tab moves on. Alt with an arrow key resizes, Alt with 0 resets."}</p>
         </>
       )}
 

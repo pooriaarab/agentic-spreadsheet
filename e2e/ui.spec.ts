@@ -336,8 +336,12 @@ test("keyboard navigation: arrows stop at the edge, Alt and an arrow resize, a h
   await cell(page, "A1").click();
   await page.getByRole("button", { name: "Insert column" }).click();
   await expect(cell(page, "A1")).toBeVisible();
-  expect((await cell(page, "C2").boundingBox())!.width).toBeCloseTo(wide, 0);
+  await expect.poll(async () => Math.round((await cell(page, "C2").boundingBox())!.width)).toBe(Math.round(wide));
   expect((await cell(page, "B2").boundingBox())!.width).toBeLessThan(wide);
+  // Alt and 0 reset the column and the row to the default size.
+  await cell(page, "C2").click();
+  await page.keyboard.press("Alt+0");
+  await expect.poll(async () => Math.round((await cell(page, "C2").boundingBox())!.width)).toBe(112);
   // A drag on the edge of a column header resizes it, and a double click resets it.
   const head = page.locator("thead th").nth(3);
   const box = (await head.boundingBox())!;

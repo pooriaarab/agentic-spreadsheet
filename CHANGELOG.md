@@ -9,7 +9,7 @@ All notable changes to this project are listed here. The format follows
 
 ### Added
 
-- The grid resizes columns and rows: drag the edge of a header, press Alt with an arrow key on a cell, use the Widen, Narrow, Taller, and Shorter buttons, or double click an edge to reset. Sizes last as long as the view, stay with their sheet, and move with their column or row when you insert or delete one.
+- The grid resizes columns and rows: drag the edge of a header, press Alt with an arrow key on a cell, use the Widen, Narrow, Taller, and Shorter buttons, press Alt with 0 on a cell, or double click an edge to reset. Sizes last as long as the view, stay with their sheet, and move with their column or row when you insert or delete one.
 - A blank sheet shows a short hint on how to start.
 
 ### Changed
