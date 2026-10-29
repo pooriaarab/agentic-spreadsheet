@@ -35,30 +35,41 @@ interface Server {
 }
 const home = mkdtempSync(join(tmpdir(), "wrangler-"));
 
-async function freePort(): Promise<number> {
-  return new Promise((resolve) => {
-    const server = createServer().listen(0, "127.0.0.1", () => {
-      const { port } = server.address() as { port: number };
-      server.close(() => resolve(port));
-    });
-  });
+// Ports that are free now. They are all open together, so no two are the same.
+async function freePorts(count: number): Promise<number[]> {
+  const open = await Promise.all(
+    Array.from({ length: count }, () => new Promise<ReturnType<typeof createServer>>((resolve) => {
+      const server = createServer().listen(0, "127.0.0.1", () => resolve(server));
+    })),
+  );
+  const ports = open.map((server) => (server.address() as { port: number }).port);
+  await Promise.all(open.map((server) => new Promise((resolve) => server.close(resolve))));
+  return ports;
 }
 
+// Each server gets its own port and its own inspector port. The inspector port defaults to one
+// number for every server, and two servers that start together clash on it. A port that was free
+// can still be taken before wrangler binds it, so a server that exits at start is started again, up
+// to three times.
 async function start(vars: Record<string, string>): Promise<Server> {
-  const port = await freePort();
-  const args = [WRANGLER, "dev", "--port", String(port), "--ip", "127.0.0.1", ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`])];
-  const env = { ...process.env, CI: "1", NO_COLOR: "1", WRANGLER_SEND_METRICS: "false", XDG_CONFIG_HOME: home, HOME: home };
-  const child: ChildProcess = spawn(process.execPath, args, { env, stdio: ["ignore", "pipe", "pipe"], detached: true });
-  let [exited, log] = [false, ""];
-  child.on("exit", () => (exited = true));
-  for (const stream of [child.stdout, child.stderr]) stream?.on("data", (chunk: Buffer) => (log = (log + chunk).slice(-1500)));
-  const url = `http://127.0.0.1:${port}`;
-  for (let i = 0; i < 300; i += 1) {
-    if (exited) throw new Error(`wrangler dev exited early: ${log}`);
-    if (await fetch(`${url}/health`).then(() => true, () => false)) break;
-    await new Promise((r) => setTimeout(r, 300));
+  for (let attempt = 1; ; attempt += 1) {
+    const [port, inspector] = await freePorts(2);
+    const args = [WRANGLER, "dev", "--port", String(port), "--inspector-port", String(inspector), "--ip", "127.0.0.1", ...Object.entries(vars).flatMap(([k, v]) => ["--var", `${k}:${v}`])];
+    const env = { ...process.env, CI: "1", NO_COLOR: "1", WRANGLER_SEND_METRICS: "false", XDG_CONFIG_HOME: home, HOME: home };
+    const child: ChildProcess = spawn(process.execPath, args, { env, stdio: ["ignore", "pipe", "pipe"], detached: true });
+    let [exited, log] = [false, ""];
+    child.on("exit", () => (exited = true));
+    for (const stream of [child.stdout, child.stderr]) stream?.on("data", (chunk: Buffer) => (log = (log + chunk).slice(-1500)));
+    const url = `http://127.0.0.1:${port}`;
+    const stop = async () => void (child.pid && !exited && process.kill(-child.pid, "SIGKILL"));
+    for (let i = 0; i < 300; i += 1) {
+      if (exited) break;
+      if (await fetch(`${url}/health`).then(() => true, () => false)) return { url, stop };
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    await stop();
+    if (!exited || attempt >= 3) throw new Error(`wrangler dev did not start after ${attempt} tries: ${log}`);
   }
-  return { url, stop: async () => void (child.pid && process.kill(-child.pid, "SIGKILL")) };
 }
 
 const servers: Record<string, Server> = {};
