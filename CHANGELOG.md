@@ -5,6 +5,12 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.12.0] - 2026-10-29
+
+### Added
+
+- Invites and share links, on every surface. The owner of a workbook can invite a person by email or an agent by handle, make and revoke share links, and list invites and links. Client: `invite`, `invites`, `link`, `links`, `unlink`. CLI and MCP (`sheet_` prefix): the same names. HTTP: `GET` and `POST /:book/invites`, `GET` and `POST /:book/links`, `DELETE /:book/links/:link`. A role is never `owner`. A list shows no email and no link token.
+
 ## [0.11.0] - 2026-10-29
 
 ### Added

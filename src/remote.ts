@@ -33,6 +33,10 @@ const cursor = z.string().optional().describe("The nextCursor of the last page."
 const subject = z.string().min(1).describe("The id of the person or agent.");
 const subjectKind = z.enum(SUBJECT_KIND_NAMES).describe("A person (human) and an agent with one id hold separate roles.");
 
+const lifetime = z.coerce.number().int().positive().optional().describe("How long it lives, in milliseconds.");
+// The CLI gives "true" or "false" as text, and MCP gives a boolean.
+const flag = z.union([z.boolean(), z.enum(["true", "false"]).transform((v) => v === "true")]).optional().describe("Only signed-in people may use it.");
+
 export interface ShareOp {
   name: string;
   description: string;
@@ -59,6 +63,31 @@ export const SHARE_OPS: ShareOp[] = [
     shape: { book, subject, subjectKind },
     run: (a: { book: string; subject: string; subjectKind: "human" | "agent" }, client) =>
       client.unshare({ book: a.book, kind: a.subjectKind, subject: a.subject }),
+  },
+  {
+    name: "invites", description: "List the invites on a workbook, through the Worker. Owner only. An invite shows no email. Up to 100 a page: pass nextCursor back as cursor.", args: ["book"],
+    shape: { book, limit: z.coerce.number().int().min(1).max(100).optional().describe("Invites a page, 100 at most."), cursor }, readOnly: true,
+    run: (a: { book: string; limit?: number; cursor?: string }, client) => client.invites(a),
+  },
+  {
+    name: "invite", description: "Invite a person by email or an agent by handle to a workbook, through the Worker. Give email or handle, not both. The role is not owner. Owner only.", args: ["book"],
+    shape: { book, role: z.enum(SHARE_ROLES).describe("viewer, commenter, or editor."), email: z.string().min(3).optional(), handle: z.string().min(1).optional(), expiresInMs: lifetime },
+    run: (a: { book: string; role: "viewer" | "commenter" | "editor"; email?: string; handle?: string; expiresInMs?: number }, client) => client.invite(a),
+  },
+  {
+    name: "links", description: "List the share links on a workbook, through the Worker. Owner only. A link shows no token. Up to 100 a page: pass nextCursor back as cursor.", args: ["book"],
+    shape: { book, limit: z.coerce.number().int().min(1).max(100).optional().describe("Links a page, 100 at most."), cursor }, readOnly: true,
+    run: (a: { book: string; limit?: number; cursor?: string }, client) => client.links(a),
+  },
+  {
+    name: "link", description: "Make a share link for a workbook, through the Worker. The reply holds the token once: it cannot be read again. The role is not owner. Owner only.", args: ["book"],
+    shape: { book, role: z.enum(SHARE_ROLES).describe("viewer, commenter, or editor."), signedInOnly: flag, expiresInMs: lifetime },
+    run: (a: { book: string; role: "viewer" | "commenter" | "editor"; signedInOnly?: boolean; expiresInMs?: number }, client) => client.link(a),
+  },
+  {
+    name: "unlink", description: "Revoke a share link of a workbook, through the Worker. Owner only.", args: ["book"],
+    shape: { book, link: z.string().min(1).describe("Link id.") },
+    run: (a: { book: string; link: string }, client) => client.unlink(a),
   },
 ];
 

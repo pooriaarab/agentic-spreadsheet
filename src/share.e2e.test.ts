@@ -126,6 +126,36 @@ describe("sharing from the CLI", () => {
     expect(cli(KEY_OWNER, "shares", "page", "--limit", "0").code).toBe(1);
   });
 
+  test("invite, invites, link, links, and unlink work from the CLI and never show an email or a token", async () => {
+    await as(KEY_OWNER).create({ book: "inv" });
+    const invite = JSON.parse(cli(KEY_OWNER, "invite", "inv", "--role", "viewer", "--email", "ada@example.com", "--expires-in-ms", "60000").out) as { id: string };
+    expect(invite.id).toBeTruthy();
+    expect(cli(KEY_OWNER, "invite", "inv", "--role", "viewer", "--handle", "helper").code).toBe(0);
+    const link = JSON.parse(cli(KEY_OWNER, "link", "inv", "--role", "viewer", "--signed-in-only", "true").out) as { id: string; token: string };
+    expect(link.token.length).toBeGreaterThan(20);
+    const invites = cli(KEY_OWNER, "invites", "inv").out;
+    expect(JSON.parse(invites).invites).toHaveLength(2);
+    expect(invites).not.toContain("ada@example.com");
+    const links = cli(KEY_OWNER, "links", "inv").out;
+    expect(JSON.parse(links).links).toMatchObject([{ id: link.id, role: "viewer", signedInOnly: true }]);
+    expect(links).not.toContain(link.token);
+    expect(links).not.toContain("tokenHash");
+    expect(cli(KEY_OWNER, "unlink", "inv", "--link", link.id).out).toBe('{"ok":true}');
+    expect(JSON.parse(cli(KEY_OWNER, "links", "inv").out).links[0].revokedAt).toBeTypeOf("number");
+    expect(cli(KEY_OWNER, "unlink", "inv", "--link", "nope").code).toBe(1);
+    expect(cli(KEY_OWNER, "invite", "inv", "--role", "owner", "--handle", "helper").code).toBe(1);
+    expect(cli(KEY_OWNER, "invite", "inv", "--role", "viewer").code).toBe(1);
+    expect(cli(undefined, "link", "inv", "--role", "viewer").code).toBe(2);
+  });
+
+  test("a non-owner cannot invite or make links", () => {
+    for (const args of [["invites", "plan"], ["invite", "plan", "--role", "viewer", "--handle", "x"], ["links", "plan"], ["link", "plan", "--role", "viewer"], ["unlink", "plan", "--link", "x"]]) {
+      const r = cli(KEY_VIC, ...args);
+      expect(r.code, args[0]).toBe(1);
+      expect(r.err).toContain("no workbook");
+    }
+  });
+
   test("a non-owner cannot list or change shares", () => {
     for (const args of [["shares", "plan"], ["share", "plan", "--subject", "vic", "--subject-kind", "human", "--role", "editor"], ["unshare", "plan", "--subject", "ana", "--subject-kind", "human"]]) {
       const r = cli(KEY_VIC, ...args);
@@ -172,6 +202,16 @@ describe("sharing from MCP", () => {
       expect((await call(client, "sheet_unshare", { book: "mcp", subject: "bot", subjectKind: "agent" })).body).toEqual({ ok: true });
       expect((await call(client, "sheet_unshare", { book: "mcp", subject: "bot", subjectKind: "agent" })).isError).toBe(true);
       expect((await call(client, "sheet_shares", { book: "ghost" })).isError).toBe(true);
+      expect(names).toEqual(expect.arrayContaining(["sheet_invite", "sheet_invites", "sheet_link", "sheet_links", "sheet_unlink"]));
+      expect((await call(client, "sheet_invite", { book: "mcp", role: "viewer", handle: "helper" })).isError).toBe(false);
+      const made = (await call(client, "sheet_link", { book: "mcp", role: "viewer", signedInOnly: true })).body as { id: string; token: string };
+      const listed = await call(client, "sheet_links", { book: "mcp" });
+      expect(listed.body.links).toMatchObject([{ id: made.id, signedInOnly: true }]);
+      expect(JSON.stringify(listed.body)).not.toContain(made.token);
+      expect((await call(client, "sheet_invites", { book: "mcp" })).body.invites).toMatchObject([{ for: "handle", handle: "helper" }]);
+      expect((await call(client, "sheet_unlink", { book: "mcp", link: made.id })).body).toEqual({ ok: true });
+      const owner = (await client.callTool({ name: "sheet_link", arguments: { book: "mcp", role: "owner" } })) as { isError?: boolean };
+      expect(owner.isError).toBe(true);
     } finally {
       await client.close();
     }

@@ -17,9 +17,10 @@ ${SHARE_OPS.map((op) => `  ${`${op.name} ${op.args.map((a) => `<${a}>`).join(" "
 Flags: --sheet <name> --dir <path> --file <csv> --as-text.
 A write needs --as <id> and --kind <kind>, or SHEET_AS and SHEET_KIND. The kind is one of
 human, agent_of_human, agent_of_agent, agent, user_token. There is no default.
-share, shares, and unshare call a Worker: set SHEET_URL and SHEET_TOKEN. They take --subject <id> --subject-kind <human|agent>
-(--kind is the kind of a writer), and share takes --role <viewer|commenter|editor>. A local store has no roles.
-The Worker has no share links. With SHEET_URL and SHEET_TOKEN set, "mcp" also has sheet_share, sheet_shares, and sheet_unshare.
+share, shares, unshare, invite, invites, link, links, and unlink call a Worker: set SHEET_URL and SHEET_TOKEN. share and unshare take
+--subject <id> --subject-kind <human|agent> (--kind is the kind of a writer), and share takes --role <viewer|commenter|editor>.
+invite takes --role and --email <e> or --handle <h>. link takes --role, --signed-in-only <true|false>. Both take --expires-in-ms <n>.
+unlink takes --link <id>. A local store has no roles. With SHEET_URL and SHEET_TOKEN set, "mcp" also has sheet_share, sheet_shares, sheet_unshare, sheet_invite, sheet_invites, sheet_link, sheet_links, and sheet_unlink.
 Env: SHEET_URL, SHEET_TOKEN, SHEET_DIR, SHEET_AS, SHEET_KIND. The store is ./.sheets unless --dir or SHEET_DIR says otherwise.`;
 
 async function main(argv: string[]): Promise<number> {

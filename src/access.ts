@@ -11,6 +11,20 @@ export class NoShare extends Error {
   }
 }
 
+export class NoLink extends Error {
+  constructor(link: string) {
+    super(`no link "${link}" on this workbook`);
+  }
+}
+
+export interface LinkSummary {
+  id: string;
+  role: Role;
+  signedInOnly: boolean;
+  expiresAt?: number;
+  revokedAt?: number;
+}
+
 export const SHARE_ROLES = ["viewer", "commenter", "editor"] as const;
 export type ShareRole = (typeof SHARE_ROLES)[number];
 
@@ -69,6 +83,39 @@ export function createAccess(store: Store) {
     async list(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}): Promise<{ grants: { subjectKind: SubjectKind; subjectHash: string; role: Role }[]; nextCursor?: string }> {
       const page = await sharing.listGrants(await context(who), await resourceId(book), { limit: paging.limit ?? 100, cursor: paging.cursor });
       return { grants: page.grants.map((g) => ({ subjectKind: g.subjectKind, subjectHash: g.subjectId, role: g.role })), nextCursor: page.nextCursor };
+    },
+    // The invites on a book. An invite shows no email: it says whether it is for an email or a handle. Only an owner may.
+    async invites(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}) {
+      return sharing.listInvites(await context(who), await resourceId(book), { limit: paging.limit ?? 100, cursor: paging.cursor });
+    },
+    // Invites a person by email or an agent by handle. The role is not owner. Only an owner may.
+    async invite(who: Principal, book: string, input: { role: ShareRole; email?: string; handle?: string; expiresInMs?: number }): Promise<{ id: string }> {
+      return sharing.createInvite(await context(who), await resourceId(book), input);
+    },
+    // The links on a book, one page. The store keeps a token hash only, and a list never shows it. Only an owner may.
+    async links(who: Principal, book: string, paging: { limit?: number; cursor?: string } = {}): Promise<{ links: LinkSummary[]; nextCursor?: string }> {
+      const resource = await resourceId(book);
+      if (!(await sharing.can(await context(who), "admin", resource)).allowed) throw new Error("forbidden");
+      const page = await store.query("links", { where: { resourceId: resource }, limit: paging.limit ?? 100, ...(paging.cursor === undefined ? {} : { cursor: paging.cursor }) });
+      const links = page.items.map(({ data: d }): LinkSummary => ({
+        id: String(d.id),
+        role: d.role as Role,
+        signedInOnly: d.signedInOnly === true,
+        ...(typeof d.expiresAt === "number" ? { expiresAt: d.expiresAt } : {}),
+        ...(d.revokedAt != null ? { revokedAt: typeof d.revokedAt === "number" ? d.revokedAt : 0 } : {}),
+      }));
+      return { links, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
+    },
+    // The token shows once, in this reply. The role is not owner. Only an owner may.
+    async createLink(who: Principal, book: string, input: { role: ShareRole; signedInOnly?: boolean; expiresInMs?: number }, now = Date.now()): Promise<{ id: string; token: string }> {
+      const { expiresInMs, ...rest } = input;
+      return sharing.createLink(await context(who), await resourceId(book), { ...rest, ...(expiresInMs === undefined ? {} : { expiresAt: now + expiresInMs }) });
+    },
+    // A link of another book is "no such link" here, even for an owner of both.
+    async revokeLink(who: Principal, book: string, linkId: string): Promise<void> {
+      const resource = await resourceId(book);
+      if (!/^[\w-]{1,128}$/.test(linkId) || (await store.get("links", linkId))?.resourceId !== resource) throw new NoLink(linkId);
+      await sharing.revokeLink(await context(who), linkId);
     },
     async unshare(who: Principal, book: string, from: { kind: SubjectKind; id: string }): Promise<void> {
       const [resource, target] = [await resourceId(book), await subject(from.kind, from.id)];

@@ -9,6 +9,24 @@ export type Value = Cell | FormulaError;
 export type PrincipalKind = "human" | "agent_of_human" | "agent_of_agent" | "agent" | "user_token";
 export type SubjectKind = "human" | "agent";
 export type ShareRole = "viewer" | "commenter" | "editor";
+/** An open invite. It never shows the email: `for` says whether it is for an email or a handle. */
+export interface InviteSummary {
+  id: string;
+  role: ShareRole | "owner";
+  for: "email" | "handle";
+  handle?: string;
+  expiresAt?: number;
+  acceptedAt?: number;
+  revokedAt?: number;
+  [field: string]: unknown;
+}
+export interface LinkSummary {
+  id: string;
+  role: ShareRole | "owner";
+  signedInOnly: boolean;
+  expiresAt?: number;
+  revokedAt?: number;
+}
 
 export interface CellAuthor {
   id: string;
@@ -140,6 +158,20 @@ export function createClient({ baseUrl, token, fetch: fetchImpl }: ClientOptions
     /** `GET /:book/shares`. Only the owner may list. A subject shows as a hash of its id. Up to 100 grants come back: pass `nextCursor` as `cursor` to read on. */
     shares: ({ book: id, ...query }: { book: string; limit?: number; cursor?: string }, opts: CallOptions = {}) =>
       json<{ grants: { subjectKind: SubjectKind; subjectHash: string; role: "owner" | ShareRole }[]; nextCursor?: string }>("GET", `${book(id)}/shares`, opts, { query }),
+    /** `GET /:book/invites`. Only the owner may list. An invite shows no email. */
+    invites: ({ book: id, ...query }: { book: string; limit?: number; cursor?: string }, opts: CallOptions = {}) =>
+      json<{ invites: InviteSummary[]; nextCursor?: string }>("GET", `${book(id)}/invites`, opts, { query }),
+    /** `POST /:book/invites`. Invite a person by `email` or an agent by `handle`. The role is not owner. Only the owner may. */
+    invite: ({ book: id, ...body }: { book: string; role: ShareRole; email?: string; handle?: string; expiresInMs?: number }, opts: CallOptions = {}) =>
+      json<{ id: string }>("POST", `${book(id)}/invites`, opts, { body }),
+    /** `GET /:book/links`. Only the owner may list. A link shows no token. */
+    links: ({ book: id, ...query }: { book: string; limit?: number; cursor?: string }, opts: CallOptions = {}) =>
+      json<{ links: LinkSummary[]; nextCursor?: string }>("GET", `${book(id)}/links`, opts, { query }),
+    /** `POST /:book/links`. The token shows once, in this reply. The role is not owner. Only the owner may. */
+    link: ({ book: id, ...body }: { book: string; role: ShareRole; signedInOnly?: boolean; expiresInMs?: number }, opts: CallOptions = {}) =>
+      json<{ id: string; token: string }>("POST", `${book(id)}/links`, opts, { body }),
+    /** `DELETE /:book/links/:link`. */
+    unlink: ({ book: id, link }: { book: string; link: string }, opts: CallOptions = {}) => json<{ ok: true }>("DELETE", `${book(id)}/links/${segment(link)}`, opts),
     /** `DELETE /:book/share/:kind/:subject`. */
     unshare: (args: { book: string; kind: SubjectKind; subject: string }, opts: CallOptions = {}) =>
       json<{ ok: true }>("DELETE", `${book(args.book)}/share/${segment(args.kind)}/${segment(args.subject)}`, opts),

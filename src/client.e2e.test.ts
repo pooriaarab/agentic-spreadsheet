@@ -106,6 +106,13 @@ describe("client against the Worker", () => {
     expect((await bot.read({ book: "trip", range: "A1:B2" })).values).toEqual([["a", "b"], [1, 2]]);
     expect(await bot.list()).toEqual({ books: ["trip"] });
     expect(await bot.list({ limit: 1 })).toMatchObject({ books: ["trip"] });
+    const invite = await bot.invite({ book: "trip", role: "viewer", handle: "helper" });
+    const link = await bot.link({ book: "trip", role: "viewer", expiresInMs: 60_000 });
+    expect((await bot.invites({ book: "trip" })).invites.map((i) => i.id)).toEqual([invite.id]);
+    expect((await bot.links({ book: "trip" })).links).toMatchObject([{ id: link.id, role: "viewer", signedInOnly: false }]);
+    expect(await bot.unlink({ book: "trip", link: link.id })).toEqual({ ok: true });
+    expect((await failure(bot.unlink({ book: "trip", link: link.id + "x" }))).code).toBe("not_found");
+    expect((await failure(as(KEY_H).links({ book: "trip" }))).code).toBe("forbidden");
     expect(await bot.unshare({ book: "trip", kind: "human", subject: "ana" })).toEqual({ ok: true });
     expect(await bot.remove({ book: "trip" })).toEqual({ ok: true });
     expect((await failure(bot.read({ book: "trip", range: "A1" }))).code).toBe("not_found");
