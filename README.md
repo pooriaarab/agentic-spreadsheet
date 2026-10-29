@@ -191,7 +191,7 @@ Worker answers 500). R2 cannot report its jurisdiction, so nothing checks the bu
 
 ```sh
 # one key, at least 32 bytes, tied to one id and kind (a key may also carry "scopes" and, for an agent that acts for a person, "parent")
-npx wrangler dev --var SHEETS_REGION:unknown --var SHEETS_UNSAFE_REGION:1 --var 'SHEETS_API_KEYS:{"<your-key>":{"id":"bot-1","kind":"agent"}}'
+WRANGLER_SEND_METRICS=false npx wrangler dev --var SHEETS_REGION:unknown --var SHEETS_UNSAFE_REGION:1 --var 'SHEETS_API_KEYS:{"<your-key>":{"id":"bot-1","kind":"agent"}}'
 curl -H "authorization: Bearer <your-key>" -X POST localhost:8787/api/v1/sheets -d '{"book":"budget"}'
 curl -H "authorization: Bearer <your-key>" -X PUT localhost:8787/api/v1/sheets/budget/range \
   -d '{"anchor":"A1","values":[[10,20,"=A1+B1"]]}'
@@ -346,12 +346,10 @@ Run it from a checkout:
 ```sh
 npm ci
 npm run build                      # builds the Worker and the UI into dist/
-echo 'SHEETS_API_KEYS={"a-key-of-at-least-32-bytes-0123456789":{"id":"ana","kind":"human"}}' > .dev.vars
-echo 'SHEETS_REGION=unknown' >> .dev.vars && echo 'SHEETS_UNSAFE_REGION=1' >> .dev.vars
-WRANGLER_SEND_METRICS=false npx wrangler dev
+npm run dev                        # makes .dev.vars with a random key on the first run, and prints the key
 ```
 
-Open the address that Wrangler prints, and paste the key. The tab keeps the key until you close
+Open the address that Wrangler prints, and paste the key (see "Run locally"). The tab keeps the key until you close
 it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangler/state`, so it survives a restart.
 
 - **Keyboard.** Arrow keys move. Enter or F2 edits the cell. Typing on a cell replaces its text.
@@ -474,10 +472,12 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
 ```sh
 bun install        # or: npm ci
 bun run dev        # or: npm run dev
-curl http://127.0.0.1:8787/health
+curl http://localhost:8787/health
 ```
 
 The script builds the app, then runs `wrangler dev`. On the first run it writes `.dev.vars` with a random API key and prints the key. Paste the key in the page to sign in. `.dev.vars` stays out of git. `.dev.vars.example` shows the format.
+
+The scripts call `npm` and `node` (Node 22 or newer), so install both, even if you use bun. They need a POSIX shell.
 
 Run `npm run dev:smoke` to check this path. It starts the dev server on port 8799, waits for `GET /health` to answer 200, and stops the server. CI runs it as the "dev smoke" step. Set `DEV_SMOKE_PORT` to use another port.
 

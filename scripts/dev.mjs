@@ -8,6 +8,7 @@ if (!existsSync(".dev.vars")) {
   writeFileSync(
     ".dev.vars",
     `SHEETS_API_KEYS={"${key}":{"id":"ana","kind":"human"}}\nSHEETS_REGION=unknown\nSHEETS_UNSAFE_REGION=1\n`,
+    { mode: 0o600 },
   );
   console.log(`Made .dev.vars. Paste this key in the page to sign in: ${key}`);
 }
