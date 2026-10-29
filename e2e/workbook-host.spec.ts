@@ -51,7 +51,7 @@ async function host(browser: Browser, key: string, book: string, who: Record<str
   // A page from the Worker itself, so the browser counts the host page as local and lets it open the room's socket.
   await page.goto(`/health#${new URLSearchParams({ key, book, ...who })}`);
   await page.setContent(
-    `<!doctype html><html lang="en" data-theme="${theme}"><head><meta charset="utf-8"><title>Host workbook</title><link rel="stylesheet" href="/e2e-host/app.css"><style>body { margin: 1rem; background: var(--ad-color-bg); color: var(--ad-color-text); }</style></head><body><main><div id="sheet"></div></main><script type="module" src="/e2e-host/app.js"></script></body></html>`,
+    `<!doctype html><html lang="en" data-theme="${theme}"><head><meta charset="utf-8"><title>Host workbook</title><link rel="stylesheet" href="/e2e-host/app.css"><style>body { margin: 1rem; background: var(--agd-color-bg); color: var(--agd-color-text); }</style></head><body><main><div id="sheet"></div></main><script type="module" src="/e2e-host/app.js"></script></body></html>`,
   );
   await expect(page.getByRole("grid")).toBeVisible();
   return page;
@@ -100,7 +100,7 @@ for (const theme of ["light", "dark"] as const) {
     await api(ANA).share({ book, kind: "agent", subject: "bot-1", role: "editor" });
     const ana = await host(browser, ANA, book, { kind: "human", name: "Ana", id: "ana", seed: "1" }, theme);
     const bot = await host(browser, BOT, book, { kind: "agent_of_human", name: "Scribe", id: "bot-1" }, theme);
-    await expect(ana.locator(".ad-stack__summary")).toContainText("1 agent");
+    await expect(ana.locator(".agd-stack__summary")).toContainText("1 agent");
     await typeIn(bot, "A1", "5");
     await expect(cell(ana, "A1")).toHaveAttribute("aria-label", /written by agent bot-1/);
     await expect(cell(ana, "A1").locator(".as-mark")).toHaveCount(1);

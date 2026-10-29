@@ -5,6 +5,8 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-29
+
 ### Added
 
 - `agentic-spreadsheet/ui`: a `host` option for `mount` and `WorkbookView`. The app gives its own `Y.Doc`, and optionally
@@ -13,6 +15,11 @@ All notable changes to this project are listed here. The format follows
   required with it. New option `title`.
 - `Workbook.dispose()` stops a workbook from watching its document, and `Workbook.needsConversion(doc)` says if opening a
   document converts an old workbook. A workbook whose conversion fails no longer leaves an observer on the document.
+
+### Changed
+
+- BREAKING: design class prefix is now agd-. The classes and custom properties of `agentic-design` that began with the old prefix now begin with `agd-` (for example `.agd-button` and `--agd-color-text`). Ad blockers hide the old class names, so the prefix changed. The `./ui` output changes. A host that styles those names must use the new ones. There are no aliases.
+- The `agentic-design` dependency is now `^0.4.0`, which uses the `agd-` prefix.
 
 ## [0.9.0] - 2026-10-29
 

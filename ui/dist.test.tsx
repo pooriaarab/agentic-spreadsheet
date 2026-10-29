@@ -34,7 +34,7 @@ describe.skipIf(!built)("dist/embed.js and dist/embed.css", () => {
   it("ships the styles in one file that leaves the host page alone", () => {
     const css = readFileSync("dist/embed.css", "utf8");
     expect(css).not.toContain("@import");
-    expect(css).toContain(".ad-button");
+    expect(css).toContain(".agd-button");
     expect(css).toContain("@font-face");
     // No rule that targets the whole page: bare `*`, `html`, `body`, or a bare heading, link, or paragraph.
     const selectors = [...css.matchAll(/(?:^|})\s*([^{}@]+)\{/g)].flatMap((m) => m[1].split(",").map((x) => x.trim()));
@@ -42,6 +42,6 @@ describe.skipIf(!built)("dist/embed.js and dist/embed.css", () => {
     expect(selectors.length).toBeGreaterThan(100);
     expect(page).toEqual([]);
     // Dialogs and toasts render outside the sheet, so they carry their own color and box model.
-    for (const portal of [".ad-dialog", ".ad-toast-viewport", ".ad-tooltip"]) expect(selectors).toContain(portal);
+    for (const portal of [".agd-dialog", ".agd-toast-viewport", ".agd-tooltip"]) expect(selectors).toContain(portal);
   });
 });
