@@ -23,13 +23,14 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 // - export is not CSV, or a response can be cached
 // - a workbook is gone after the Worker restarts, or a Worker on a new directory sees another Worker's data
 // - the Worker serves with no region, with the region "unknown" and no unsafe flag, or with a bad region
+// - a viewer writes, a key with only the read scope writes, or a key that left the env still works after a restart
 // - /health reports a version other than package.json
 
 const WRANGLER = fileURLToPath(new URL("../node_modules/wrangler/bin/wrangler.js", import.meta.url));
 const VERSION = (JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8")) as { version: string }).version;
 const KEY_A = "agent-key-0123456789-0123456789-abcdef";
 const KEY_H = "human-key-0123456789-0123456789-abcdef";
-const KEYS = JSON.stringify({ [KEY_A]: { id: "bot-1", kind: "agent_of_human" }, [KEY_H]: { id: "ana", kind: "human" } });
+const KEYS = JSON.stringify({ [KEY_A]: { id: "bot-1", kind: "agent_of_human", parent: "ana" }, [KEY_H]: { id: "ana", kind: "human" } });
 
 interface Server {
   url: string;
@@ -84,6 +85,10 @@ beforeAll(async () => {
   const configs: Record<string, Record<string, string>> = {
     none: {},
     both: { SHEETS_API_KEYS: KEYS, SHEETS_UNSAFE_TRUST_HEADERS: "1" },
+    noparent: { SHEETS_API_KEYS: JSON.stringify({ [KEY_A]: { id: "a", kind: "agent_of_human" } }) },
+    badparent: { SHEETS_API_KEYS: JSON.stringify({ [KEY_A]: { id: "a", kind: "agent_of_human", parent: "nobody" } }) },
+    badscope: { SHEETS_API_KEYS: JSON.stringify({ [KEY_A]: { id: "a", kind: "agent", scopes: ["root"] } }) },
+    dashkey: { SHEETS_API_KEYS: JSON.stringify({ "has.dots.0123456789-0123456789-abcdef": { id: "a", kind: "agent" } }) },
     short: { SHEETS_API_KEYS: JSON.stringify({ "too-short": { id: "a", kind: "agent" } }) },
     nokind: { SHEETS_API_KEYS: JSON.stringify({ [KEY_A]: { id: "a" } }) },
     badkind: { SHEETS_API_KEYS: JSON.stringify({ [KEY_A]: { id: "a", kind: "root" } }) },
@@ -116,6 +121,10 @@ describe("refuses to start without safe auth", () => {
     ["none", /no auth is set.*SHEETS_API_KEYS.*SHEETS_UNSAFE_TRUST_HEADERS/],
     ["both", /not both/],
     ["short", /at least 32 bytes/],
+    ["dashkey", /letters, digits/],
+    ["noparent", /needs a "parent"/],
+    ["badparent", /id of another key/],
+    ["badscope", /scopes must be/],
     ["nokind", /id and a kind/],
     ["badkind", /id and a kind/],
     ["badjson", /must be JSON/],
@@ -286,5 +295,48 @@ describe("storage", () => {
     const res = await call(name, "GET", API, as(KEY_H));
     expect(res.status).toBe(500);
     expect(res.json().error).toMatch(message);
+  }, 120_000);
+});
+
+describe("identity credentials", () => {
+  const KEY_V = "viewer-key-0123456789-0123456789-abcde";
+  const KEY_R = "reader-key-0123456789-0123456789-abcde";
+  const ROSTER = {
+    [KEY_H]: { id: "ana", kind: "human" },
+    [KEY_A]: { id: "bot-1", kind: "agent_of_human", parent: "ana" },
+    [KEY_V]: { id: "vic", kind: "human" },
+    [KEY_R]: { id: "rex", kind: "agent", scopes: ["workbook:read"] },
+  };
+
+  test("no credential is 401, a viewer reads and cannot write, and a read scope cannot write", async () => {
+    const persist = mkdtempSync(join(tmpdir(), "state-roles-"));
+    servers.roles = await start({ SHEETS_API_KEYS: JSON.stringify(ROSTER) }, persist);
+    expect((await call("roles", "GET", API)).status).toBe(401);
+    expect((await call("roles", "POST", API, { body: { book: "x" } })).status).toBe(401);
+    await call("roles", "POST", API, { ...as(KEY_H), body: { book: "team" } });
+    await call("roles", "PUT", `${API}/team/range`, { ...as(KEY_H), body: { anchor: "A1", values: [[1]] } });
+    for (const [who, subject] of [["vic", KEY_V], ["rex", KEY_R]]) {
+      expect((await call("roles", "PUT", `${API}/team/share`, { ...as(KEY_H), body: { kind: subject === KEY_V ? "human" : "agent", subject: who, role: subject === KEY_V ? "viewer" : "editor" } })).status).toBe(200);
+    }
+    const write = { body: { anchor: "A2", values: [[2]] } };
+    const viewer = await call("roles", "PUT", `${API}/team/range`, { ...as(KEY_V), ...write });
+    expect([viewer.status, viewer.json().error]).toEqual([403, "the viewer role cannot write this workbook"]);
+    expect((await call("roles", "GET", `${API}/team/range?range=A1`, as(KEY_V))).json().values).toEqual([[1]]);
+    // rex holds the editor role on the book, but the key carries the read scope only.
+    expect((await call("roles", "PUT", `${API}/team/range`, { ...as(KEY_R), ...write })).status).toBe(403);
+    expect((await call("roles", "GET", `${API}/team/range?range=A1`, as(KEY_R))).status).toBe(200);
+    expect((await call("roles", "PUT", `${API}/team/range`, { ...as(KEY_H), ...write })).status).toBe(200);
+  }, 120_000);
+
+  test("a key that leaves the env stops working after a restart, and the others keep their data", async () => {
+    const persist = mkdtempSync(join(tmpdir(), "state-revoke-"));
+    const first = (servers.keep1 = await start({ SHEETS_API_KEYS: JSON.stringify(ROSTER) }, persist));
+    await call("keep1", "POST", API, { ...as(KEY_H), body: { book: "kept" } });
+    expect((await call("keep1", "GET", API, as(KEY_V))).status).toBe(200);
+    await first.stop();
+    const { [KEY_V]: _gone, ...rest } = ROSTER;
+    servers.keep2 = await start({ SHEETS_API_KEYS: JSON.stringify(rest) }, persist);
+    expect((await call("keep2", "GET", API, as(KEY_V))).status).toBe(401);
+    expect((await call("keep2", "GET", `${API}/kept/range?range=A1`, as(KEY_H))).status).toBe(200);
   }, 120_000);
 });

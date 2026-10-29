@@ -7,10 +7,10 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import * as Y from "yjs";
-import { bearerAuth } from "./auth.js";
+import { fromAuth } from "./auth.js";
 import { createFileBlobs, createFileStore } from "./core/file-store.js";
 import { fromBase64, toBase64 } from "./core/bytes.js";
-import { createMemoryBlobs, createMemoryStore } from "agentic-identity";
+import { createMemoryAuth, createMemoryBlobs, createMemoryStore } from "agentic-identity";
 import { createAccess } from "./access.js";
 import { createApp } from "./worker.js";
 import { OPS } from "./ops.js";
@@ -101,12 +101,13 @@ describe("a stored old workbook", () => {
     } finally {
       await client.close();
     }
-    const key = "agent-key-0123456789-0123456789-abcdef";
     const store = createMemoryStore();
     await put(store, "old", legacyState());
     // A workbook stored before sharing has no owner. The Worker refuses it until someone records one.
     await createAccess(store).create({ id: "bot", kind: "agent_of_human" }, "old");
-    const app = createApp({ store, blobs: createMemoryBlobs(), authenticate: await bearerAuth({ [key]: { id: "bot", kind: "agent_of_human" } }) });
+    const identity = createMemoryAuth();
+    const key = await identity.issue({ principalId: "bot", kind: "agent_of_human", chain: [{ id: "bot", kind: "agent_of_human" }], scopes: ["*:admin"] });
+    const app = createApp({ store, blobs: createMemoryBlobs(), authenticate: fromAuth(identity.auth) });
     const headers = { authorization: `Bearer ${key}`, "content-type": "application/json" };
     const got = await app.request("/api/v1/sheets/old/range?range=A1:B3", { headers });
     expect(await got.json()).toEqual(expected);

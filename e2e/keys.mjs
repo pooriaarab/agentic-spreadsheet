@@ -4,5 +4,5 @@ export const BOT = "agent-key-bot-0123456789-0123456789-abcde";
 export const KEYS = {
   [ANA]: { id: "ana", kind: "human" },
   [BEN]: { id: "ben", kind: "human" },
-  [BOT]: { id: "bot-1", kind: "agent_of_human" },
+  [BOT]: { id: "bot-1", kind: "agent_of_human", parent: "ana" },
 };
