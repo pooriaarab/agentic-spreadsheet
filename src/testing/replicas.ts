@@ -5,8 +5,8 @@ import { interleaving } from "./interleaving.js";
 
 // A copy of a workbook with its own client id. A fixed id makes a clash between two writers
 // resolve the same way on every run.
-export function fork(state: Uint8Array, clientID: number): Workbook {
-  const doc = new Y.Doc();
+export function fork(state: Uint8Array, clientID: number, gc = true): Workbook {
+  const doc = new Y.Doc({ gc });
   doc.clientID = clientID;
   Y.applyUpdate(doc, state);
   return new Workbook(doc);

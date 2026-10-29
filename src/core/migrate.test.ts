@@ -18,7 +18,9 @@ import { column, exchange, fork, grid, race, snapshot } from "../testing/replica
 // - a key already in the new form, in a sheet that still lacks an id, is dropped by the conversion
 // - two copies that convert different old states merge with no sign, then lose rows or edits, or
 //   give two sheets one id so a formula reads the wrong sheet
-// - two copies that convert one state are flagged as a clash
+// - two copies that convert one state are flagged as a clash because they keep deleted items
+//   differently, and then no copy can be written again
+// - after a clash a read shows rows in the wrong place, as if the data were good
 
 const stampOf = (id: string, kind: string) => ({ id, kind, at: "2026-01-02T03:04:05.000Z" });
 
@@ -136,21 +138,36 @@ describe("a workbook saved with A1 keys", () => {
     return [older, Y.encodeStateAsUpdate(doc)];
   }
 
-  test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("copies that convert different old states are flagged, keep every cell, and refuse writes (client ids %j)", (ids) => {
+  test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("copies that convert different old states are flagged, and every read and write throws (client ids %j)", (ids) => {
     const [older, newer] = twoStates();
     const [a, b] = [fork(older, ids[0]), fork(newer, ids[1])];
     expect([a.conversionClash(), b.conversionClash()]).toEqual([false, false]);
     exchange(a, b);
-    expect(snapshot(a, "Sheet1")).toEqual(snapshot(b, "Sheet1"));
     for (const w of [a, b]) {
       expect(w.conversionClash()).toBe(true);
-      expect(grid(w, "E9:E9")).toEqual([[7]]);
-      expect(grid(w, "A1:A2")).toEqual([[10], [20]]);
+      expect(() => grid(w, "E9:E9")).toThrow(/different old states/);
+      expect(() => w.cellCount("Sheet1")).toThrow(/different old states/);
+      expect(() => w.sheetNames()).toThrow(/different old states/);
       expect(() => w.writeRange("Sheet1", "A1", [[1]], { id: "u1", kind: "human" })).toThrow(/different old states/);
       expect(() => w.insertRows("Sheet1", 1, 1)).toThrow(/different old states/);
       const ids = (w.doc.getArray("sheets").toJSON() as { id: string; name: string }[]).map((sheet) => sheet.id);
       expect(new Set(ids).size).toBe(ids.length);
     }
+  });
+
+  test("copies that keep deleted items differently are not flagged", () => {
+    const doc = new Y.Doc({ gc: false });
+    Y.applyUpdate(doc, legacyState());
+    const cells = (doc.getArray("sheets").get(0) as Y.Map<unknown>).get("cells") as Y.Map<unknown>;
+    cells.set("A1:c", 11);
+    cells.set("A1:c", 12);
+    const state = Y.encodeStateAsUpdate(doc);
+    const [a, b] = [fork(state, 1, false), fork(state, 2, true)];
+    exchange(a, b);
+    expect([a.conversionClash(), b.conversionClash()]).toEqual([false, false]);
+    a.writeRange("Sheet1", "A1", [[1]], { id: "u1", kind: "human" });
+    exchange(a, b);
+    expect(column(b, "A", 1)).toEqual([1]);
   });
 
   test.each([[[1, 2]], [[2, 1]]] as [[number, number]][])("copies that convert one state are not flagged (client ids %j)", (ids) => {
