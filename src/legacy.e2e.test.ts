@@ -73,7 +73,7 @@ describe("a stored old workbook", () => {
 
   // Every command marked read-only runs here. A new read command with no row fails the first check.
   const READS: Record<string, string[]> = { list: ["list"], read: ["read", "old", "A1:B3"], sheets: ["sheets", "old"], export: ["export", "old"] };
-  test("every read command saves nothing", async () => {
+  test("every read command leaves the old file and the stored state as they were", async () => {
     expect(Object.keys(READS).sort()).toEqual(OPS.filter((op) => op.readOnly).map((op) => op.name).sort());
     putFile("old", legacyState());
     // The first call moves the data into store.json. The old file and the stored state stay as they were.
@@ -85,6 +85,7 @@ describe("a stored old workbook", () => {
       const sheets = await stored("old");
       expect([name, sheets.length, sheets.every((sheet) => sheet.id === undefined)]).toEqual([name, 2, true]);
       expect([name, readFileSync(file, "utf8")]).toEqual([name, before]);
+      expect([name, readFileSync(join(dir, "store.json"), "utf8").startsWith('{"format":')]).toEqual([name, true]);
     }
   });
 

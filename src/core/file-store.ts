@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, linkSync, mkdirSync, openSync, readdirSync, readFileSync, readSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import {
@@ -33,7 +33,8 @@ function readOld(dir: string): Map<string, Map<string, Doc>> | null {
     } catch {
       throw new Error(`"${path}" is not an agentic-spreadsheet data file`);
     }
-    if (!isObject(raw) || !isObject(raw.tables) || raw.format !== undefined) return null;
+    if (isObject(raw) && raw.format !== undefined) return null;
+    if (!isObject(raw) || !isObject(raw.tables)) throw new Error(`"${path}" is not an agentic-spreadsheet data file`);
     for (const [name, rows] of Object.entries(raw.tables)) {
       if (!isObject(rows)) throw new Error(`"${path}" is not an agentic-spreadsheet data file`);
       const table = new Map<string, Doc>();
@@ -86,21 +87,49 @@ async function retrying<R>(use: () => Promise<R>): Promise<R> {
   }
 }
 
-/** Takes `<path>.migrating` for the length of `use`, so two processes do not move the same data. A lock older than a minute is taken over. */
+/** True when no process has this id. Any other result, including no permission, counts as alive. */
+function isDead(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return false;
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ESRCH";
+  }
+}
+
+/**
+ * Takes `<path>.migrating` for the length of `use`, so two processes do not move the same data. The lock holds its owner's
+ * process id. One that is ten seconds old, or whose owner is gone, is moved aside by a rename, so one waiter wins.
+ */
 async function withMigrationLock<R>(path: string, use: () => Promise<R>): Promise<R> {
   const lock = `${path}.migrating`;
   const deadline = Date.now() + 30_000;
   mkdirSync(dirname(path), { recursive: true });
   for (;;) {
     try {
-      closeSync(openSync(lock, "wx", 0o600));
+      writeFileSync(lock, `${process.pid}:`, { flag: "wx", mode: 0o600 });
       break;
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
     }
     try {
-      if (Date.now() - statSync(lock).mtimeMs > 60_000) rmSync(lock, { force: true });
-    } catch {}
+      const seen = readFileSync(lock, "utf8");
+      const pid = Number(/^(\d+):/.exec(seen)?.[1]);
+      if (Date.now() - statSync(lock).mtimeMs > 10_000 || (Number.isInteger(pid) && pid > 0 && isDead(pid))) {
+        const aside = `${lock}.stale.${randomUUID()}`;
+        renameSync(lock, aside);
+        // A lock that changed in between is a newer one. Put it back unless another already exists.
+        if (readFileSync(aside, "utf8") !== seen) {
+          try {
+            linkSync(aside, lock);
+          } catch {}
+        }
+        rmSync(aside, { force: true });
+        continue;
+      }
+    } catch {
+      continue; // The lock went away between the calls. Try to take it.
+    }
     if (Date.now() > deadline) throw new StoreConflictError(`could not lock "${lock}" within 30000 ms`);
     await sleep(20 + Math.random() * 30);
   }
@@ -125,12 +154,8 @@ export function createFileStore(dir: string, options: FileStoreOptions = {}): St
           const target = createIdentityFileStore({ ...options, path: next });
           await target.transaction(async (tx) => {
             for (const [collection, rows] of old) for (const [id, doc] of rows) await tx.put(collection, id, doc);
-            // An empty store still gets a file, so a leftover 0.1.0 folder is not read again.
-            if (old.size === 0) {
-              await tx.put("workbooks", "probe", {});
-              await tx.delete("workbooks", "probe");
-            }
           });
+          // An empty store still gets a file, so a leftover 0.1.0 folder is not read again.
           if (!existsSync(next)) await target.put("workbooks", "probe", {}).then(() => target.delete("workbooks", "probe"));
           renameSync(next, path);
         } finally {
@@ -139,9 +164,25 @@ export function createFileStore(dir: string, options: FileStoreOptions = {}): St
       }
       current.add(path);
     });
+  /** True when old data may be here. A file in the new format starts with its `format` key, so a read of it needs no lock and writes nothing. */
+  const mayNeedMove = (): boolean => {
+    if (!existsSync(path)) return existsSync(join(dir, "workbooks"));
+    const fd = openSync(path, "r");
+    try {
+      const head = Buffer.alloc(10);
+      readSync(fd, head, 0, 10, 0);
+      return head.toString("utf8") !== '{"format":';
+    } finally {
+      closeSync(fd);
+    }
+  };
   let moved: Promise<void> | undefined;
   const ready = () => {
-    if (current.has(path) || (!existsSync(path) && !existsSync(join(dir, "workbooks")))) return Promise.resolve();
+    if (current.has(path)) return Promise.resolve();
+    if (!mayNeedMove()) {
+      current.add(path);
+      return Promise.resolve();
+    }
     moved ??= migrate().catch((error: unknown) => {
       moved = undefined;
       throw error;

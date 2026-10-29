@@ -5,7 +5,7 @@
 //  4. A restart loses a saved edit.
 //  5. A failed blob delete in removeWorkbook looks like success, or leaves a workbook that a second
 //     call cannot remove.
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createMemoryBlobs, createMemoryStore, type Blobs, type Store } from "agentic-identity";
@@ -100,6 +100,22 @@ describe("workbooks on shared ports", () => {
     const [a, b] = [createFileStore(dir2), createFileStore(dir2)];
     await Promise.all([a.put("workbooks", "x", { name: "x" }), b.put("workbooks", "y", { name: "y" })]);
     expect((await a.query("workbooks")).items.map((i) => i.id).sort()).toEqual(["one", "x", "y"]);
+  });
+
+  test("a store in the new format is read from a read-only folder, and a dead lock owner is taken over", async () => {
+    const dir = fresh();
+    await createFileStore(dir).put("workbooks", "a", { name: "a" });
+    chmodSync(dir, 0o555);
+    try {
+      if (process.getuid?.() !== 0) expect(await createFileStore(dir).get("workbooks", "a")).toEqual({ name: "a" });
+    } finally {
+      chmodSync(dir, 0o755);
+    }
+    const old = fresh();
+    mkdirSync(join(old, "workbooks"));
+    writeFileSync(join(old, "workbooks", "one.json"), "{}");
+    writeFileSync(join(old, "store.json.migrating"), "2147483646:");
+    expect((await createFileStore(old).query("workbooks")).items.map((i) => i.id)).toEqual(["one"]);
   });
 
   test("a corrupt store.json names the file", async () => {
