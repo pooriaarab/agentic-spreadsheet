@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type KeyboardEvent, type PointerEvent } from "react";
 import { BotIcon, Button, Dialog, Input, PresenceStack, useToast } from "agentic-design/react";
 import { colLetters } from "../src/core/a1.js";
 import type { CellAuthor, Value } from "../src/client.js";
-import { address, isError, parseInput, show, sizeFor, type Pos } from "./grid.js";
+import { address, clampSize, COL_WIDTH, isError, parseInput, ROW_HEAD, ROW_HEIGHT, show, sizeFor, type Pos } from "./grid.js";
 import type { RoomPresence, SheetCalls, Status } from "./host.js";
 import { errorText, isUnauthorized } from "./session.js";
 import { usePresence, type Live } from "./usePresence.js";
@@ -13,6 +13,8 @@ interface Data {
   values: Value[][];
   formulas: (string | null)[][];
   authors: (CellAuthor | null)[][];
+  /** The sheet has no cell with a value yet. */
+  blank: boolean;
 }
 type View = { status: "loading" } | { status: "empty" } | { status: "error"; message: string } | { status: "ready"; data: Data };
 // Where the text of an edit is typed: in the cell, or in the formula bar.
@@ -64,6 +66,9 @@ export function SheetView({ client, book, title, changes, presence, connection, 
   const [dialog, setDialog] = useState<"add" | "delete" | null>(null);
   const [newSheet, setNewSheet] = useState("");
   const [sheetError, setSheetError] = useState<string>();
+  // Sizes in pixels that the user set, by column and row. They last as long as the view, per sheet.
+  const [sizes, setSizes] = useState<{ cols: Record<number, number>; rows: Record<number, number> }>({ cols: {}, rows: {} });
+  const drag = useRef<{ axis: "cols" | "rows"; index: number; start: number; size: number } | null>(null);
   const grid = useRef<HTMLTableElement>(null);
   const refocus = useRef(false);
   const request = useRef(0);
@@ -102,7 +107,7 @@ export function SheetView({ client, book, title, changes, presence, connection, 
         if (id !== request.current) return;
         setSheets(listed.map((s) => s.name));
         setActive(current.name);
-        setView({ status: "ready", data: { cols, rows, values: read.values, formulas: read.formulas, authors: read.authors } });
+        setView({ status: "ready", data: { cols, rows, values: read.values, formulas: read.formulas, authors: read.authors, blank: current.extent === null } });
       } catch (error) {
         if (isUnauthorized(error)) return unauthorized.current();
         if (!silent && id === request.current) setView({ status: "error", message: errorText(error) });
@@ -178,6 +183,37 @@ export function SheetView({ client, book, title, changes, presence, connection, 
       fail(error, `Could not save ${address(sel)}`);
     }
   }
+  const colWidth = (col: number) => sizes.cols[col] ?? COL_WIDTH;
+  const rowHeight = (row: number) => sizes.rows[row] ?? ROW_HEIGHT;
+  const resize = (axis: "cols" | "rows", index: number, size?: number) =>
+    setSizes((now) => {
+      const next = { ...now[axis] };
+      if (size === undefined) delete next[index];
+      else next[index] = clampSize(axis, size);
+      return { ...now, [axis]: next };
+    });
+  const sizeOf = (axis: "cols" | "rows", index: number) => (axis === "cols" ? colWidth(index) : rowHeight(index));
+  function startDrag(event: PointerEvent<HTMLElement>, axis: "cols" | "rows", index: number) {
+    event.preventDefault();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    drag.current = { axis, index, start: axis === "cols" ? event.clientX : event.clientY, size: sizeOf(axis, index) };
+  }
+  function moveDrag(event: PointerEvent<HTMLElement>) {
+    const now = drag.current;
+    if (now) resize(now.axis, now.index, now.size + (now.axis === "cols" ? event.clientX : event.clientY) - now.start);
+  }
+  const handle = (axis: "cols" | "rows", index: number) => (
+    <span
+      aria-hidden="true"
+      className={axis === "cols" ? "as-grip as-grip-col" : "as-grip as-grip-row"}
+      onPointerDown={(e) => startDrag(e, axis, index)}
+      onPointerMove={moveDrag}
+      onPointerUp={() => (drag.current = null)}
+      onPointerCancel={() => (drag.current = null)}
+      onDoubleClick={() => resize(axis, index)}
+    />
+  );
+
   const cancel = () => {
     setDraft(null);
     refocus.current = true;
@@ -187,10 +223,16 @@ export function SheetView({ client, book, title, changes, presence, connection, 
   function onCellKey(event: KeyboardEvent<HTMLTableCellElement>) {
     if (data === null || event.target !== event.currentTarget) return;
     const { row, col } = sel;
-    const writes = event.key === "Enter" || event.key === "F2" || event.key === "Delete" || event.key === "Backspace" || (event.key.length === 1 && !event.ctrlKey && !event.metaKey && !event.altKey);
+    const writes = !event.altKey && (event.key === "Enter" || event.key === "F2" || event.key === "Delete" || event.key === "Backspace" || (event.key.length === 1 && !event.ctrlKey && !event.metaKey));
     if (readOnly && writes) return;
     const keys: Record<string, Pos> = { ArrowUp: { row: row - 1, col }, ArrowDown: { row: row + 1, col }, ArrowLeft: { row, col: col - 1 }, ArrowRight: { row, col: col + 1 } };
-    if (keys[event.key]) {
+    if (event.altKey && keys[event.key]) {
+      // Alt and an arrow key resize the column or the row of the cell. A double click on a header edge resets the size.
+      event.preventDefault();
+      const step = event.key === "ArrowUp" || event.key === "ArrowLeft" ? -8 : 8;
+      if (event.key === "ArrowLeft" || event.key === "ArrowRight") resize("cols", col, colWidth(col) + step);
+      else resize("rows", row, rowHeight(row) + step);
+    } else if (keys[event.key]) {
       event.preventDefault();
       move(keys[event.key]);
     } else if (event.key === "Enter" || event.key === "F2") {
@@ -304,26 +346,20 @@ export function SheetView({ client, book, title, changes, presence, connection, 
       )}
       {data !== null && (
         <>
-          <nav className="as-row as-tabs" aria-label="Sheets">
-            {sheets.map((name) => (
-              <Button key={name} size="sm" variant={name === active ? "primary" : "secondary"} aria-current={name === active ? "true" : undefined} onClick={() => (setSel({ row: 1, col: 1 }), void load(name))}>
-                {name}
-              </Button>
-            ))}
-            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => (setSheetError(undefined), setDialog("add"))}>Add sheet</Button>
-            <Button size="sm" variant="ghost" disabled={readOnly || sheets.length < 2} onClick={() => setDialog("delete")}>Delete sheet</Button>
-          </nav>
-          <div role="group" aria-label="Rows and columns" className="as-row">
-            <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not insert the row", () => client.insertRows({ ...sheetTarget, at: sel.row }))}>Insert row</Button>
-            <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not delete the row", () => client.deleteRows({ ...sheetTarget, at: sel.row }))}>Delete row</Button>
-            <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not insert the column", () => client.insertCols({ ...sheetTarget, at: sel.col }))}>Insert column</Button>
-            <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not delete the column", () => client.deleteCols({ ...sheetTarget, at: sel.col }))}>Delete column</Button>
+          <div role="group" aria-label="Rows and columns" className="as-row as-tools">
+            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not insert the row", () => client.insertRows({ ...sheetTarget, at: sel.row }))}>Insert row</Button>
+            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not delete the row", () => client.deleteRows({ ...sheetTarget, at: sel.row }))}>Delete row</Button>
+            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not insert the column", () => client.insertCols({ ...sheetTarget, at: sel.col }))}>Insert column</Button>
+            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => void structure("Could not delete the column", () => client.deleteCols({ ...sheetTarget, at: sel.col }))}>Delete column</Button>
           </div>
           <div className="as-bar">
             <span className="as-namebox"><span className="as-sr-only">Selected cell </span>{here}</span>
-            <Input
-              label="Formula bar"
+            <span className="as-fx" aria-hidden="true">fx</span>
+            <input
+              className="as-formula"
+              aria-label="Formula bar"
               autoComplete="off"
+              spellCheck={false}
               readOnly={readOnly}
               value={draft?.text ?? rawAt(sel)}
               onFocus={() => !readOnly && draft === null && setDraft({ text: rawAt(sel), where: "bar" })}
@@ -332,59 +368,83 @@ export function SheetView({ client, book, title, changes, presence, connection, 
               onBlur={(e) => draft?.where === "bar" && e.relatedTarget !== null && void commit(draft.text, sel)}
             />
           </div>
-          <div className="as-scroller">
-            <table ref={grid} role="grid" aria-readonly={readOnly || undefined} className="as-grid" aria-label={`${active}, spreadsheet`} aria-rowcount={data.rows} aria-colcount={data.cols}>
-              <thead>
-                <tr>
-                  <th scope="col" className="as-corner"><span className="as-sr-only">Row</span></th>
+          <div className="as-frame">
+            <div className="as-scroller">
+              <table ref={grid} role="grid" aria-readonly={readOnly || undefined} className="as-grid" aria-label={`${active}, spreadsheet`} aria-rowcount={data.rows} aria-colcount={data.cols} style={{ width: ROW_HEAD + Array.from({ length: data.cols }, (_, c) => colWidth(c + 1)).reduce((a, b) => a + b, 0) }}>
+                <colgroup>
+                  <col style={{ width: ROW_HEAD }} />
                   {Array.from({ length: data.cols }, (_, c) => (
-                    <th key={c} scope="col" className={c + 1 === sel.col ? "as-on" : undefined}>{colLetters(c + 1)}</th>
+                    <col key={c} style={{ width: colWidth(c + 1) }} />
                   ))}
-                </tr>
-              </thead>
-              <tbody>
-                {Array.from({ length: data.rows }, (_, r) => (
-                  <tr key={r}>
-                    <th scope="row" className={r + 1 === sel.row ? "as-on" : undefined}>{r + 1}</th>
-                    {Array.from({ length: data.cols }, (_, c) => {
-                      const pos = { row: r + 1, col: c + 1 };
-                      const value = data.values[r]?.[c] ?? null;
-                      const formula = data.formulas[r]?.[c] ?? null;
-                      const author = data.authors[r]?.[c] ?? null;
-                      const addr = address(pos);
-                      const isSel = pos.row === sel.row && pos.col === sel.col;
-                      const others = cursors.get(addr);
-                      const label = [`${addr}: ${show(value) || "empty"}`, formula && `formula ${formula}`, author?.machine && `written by agent ${author.id}`, others && `also here: ${others.join(", ")}`].filter(Boolean).join(", ");
-                      const cls = ["as-cell", typeof value === "number" && "as-num", isError(value) && "as-bad", author?.machine && "as-agent", others && "as-peer", isSel && "as-sel"].filter(Boolean).join(" ");
-                      return (
-                        <td key={c} role="gridcell" data-pos={`${pos.row},${pos.col}`} aria-label={editing && isSel && draft.where === "cell" ? undefined : label} aria-selected={isSel} tabIndex={isSel ? 0 : -1} className={cls} onKeyDown={onCellKey} onClick={() => !(isSel && draft?.where === "cell") && (draft !== null && void commit(draft.text, pos), draft === null && move(pos))}>
-                          {isSel && draft?.where === "cell" ? (
-                            <input
-                              className="as-editor"
-                              aria-label={`Edit ${addr}`}
-                              autoFocus
-                              value={draft.text}
-                              onFocus={(e) => e.currentTarget.setSelectionRange(draft.text.length, draft.text.length)}
-                              onChange={(e) => setDraft({ text: e.target.value, where: "cell" })}
-                              onKeyDown={onEditKey}
-                              onBlur={(e) => e.relatedTarget !== null && void commit(draft.text, sel)}
-                            />
-                          ) : (
-                            <>
-                              {show(value)}
-                              {author?.machine && <BotIcon className="as-mark" aria-hidden="true" />}
-                              {others && <span className="as-tag">{others[0]}</span>}
-                            </>
-                          )}
-                        </td>
-                      );
-                    })}
+                </colgroup>
+                <thead>
+                  <tr>
+                    <th scope="col" className="as-corner"><span className="as-sr-only">Row</span></th>
+                    {Array.from({ length: data.cols }, (_, c) => (
+                      <th key={c} scope="col" className={c + 1 === sel.col ? "as-on" : undefined}>
+                        {colLetters(c + 1)}
+                        {handle("cols", c + 1)}
+                      </th>
+                    ))}
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {Array.from({ length: data.rows }, (_, r) => (
+                    <tr key={r} style={{ height: rowHeight(r + 1) }}>
+                      <th scope="row" className={r + 1 === sel.row ? "as-on" : undefined}>
+                        {r + 1}
+                        {handle("rows", r + 1)}
+                      </th>
+                      {Array.from({ length: data.cols }, (_, c) => {
+                        const pos = { row: r + 1, col: c + 1 };
+                        const value = data.values[r]?.[c] ?? null;
+                        const formula = data.formulas[r]?.[c] ?? null;
+                        const author = data.authors[r]?.[c] ?? null;
+                        const addr = address(pos);
+                        const isSel = pos.row === sel.row && pos.col === sel.col;
+                        const others = cursors.get(addr);
+                        const label = [`${addr}: ${show(value) || "empty"}`, formula && `formula ${formula}`, author?.machine && `written by agent ${author.id}`, others && `also here: ${others.join(", ")}`].filter(Boolean).join(", ");
+                        const cls = ["as-cell", typeof value === "number" && "as-num", isError(value) && "as-bad", author?.machine && "as-agent", others && "as-peer", isSel && "as-sel"].filter(Boolean).join(" ");
+                        return (
+                          <td key={c} role="gridcell" data-pos={`${pos.row},${pos.col}`} aria-label={editing && isSel && draft.where === "cell" ? undefined : label} aria-selected={isSel} tabIndex={isSel ? 0 : -1} className={cls} onKeyDown={onCellKey} onClick={() => !(isSel && draft?.where === "cell") && (draft !== null && void commit(draft.text, pos), draft === null && move(pos))}>
+                            {isSel && draft?.where === "cell" ? (
+                              <input
+                                className="as-editor"
+                                aria-label={`Edit ${addr}`}
+                                autoFocus
+                                value={draft.text}
+                                onFocus={(e) => e.currentTarget.setSelectionRange(draft.text.length, draft.text.length)}
+                                onChange={(e) => setDraft({ text: e.target.value, where: "cell" })}
+                                onKeyDown={onEditKey}
+                                onBlur={(e) => e.relatedTarget !== null && void commit(draft.text, sel)}
+                              />
+                            ) : (
+                              <>
+                                {show(value)}
+                                {author?.machine && <BotIcon className="as-mark" aria-hidden="true" />}
+                                {others && <span className="as-tag">{others[0]}</span>}
+                              </>
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {data.blank && <p className="as-blank">This sheet is empty. Select a cell and type. Start a formula with =.</p>}
           </div>
-          <p className="as-muted as-legend"><BotIcon className="as-mark" aria-hidden="true" /> A cell with this mark was written by an agent. Arrow keys move{readOnly ? ", Tab moves on. This sheet is read only." : ", Enter edits, Escape cancels, Tab moves on."}</p>
+          <nav className="as-row as-tabs" aria-label="Sheets">
+            {sheets.map((name) => (
+              <Button key={name} size="sm" variant={name === active ? "secondary" : "ghost"} aria-current={name === active ? "true" : undefined} onClick={() => (setSel({ row: 1, col: 1 }), void load(name))}>
+                {name}
+              </Button>
+            ))}
+            <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => (setSheetError(undefined), setDialog("add"))}>Add sheet</Button>
+            <Button size="sm" variant="ghost" disabled={readOnly || sheets.length < 2} onClick={() => setDialog("delete")}>Delete sheet</Button>
+          </nav>
+          <p className="as-muted as-legend"><BotIcon className="as-mark" aria-hidden="true" /> A cell with this mark was written by an agent. Arrow keys move{readOnly ? ", Tab moves on. This sheet is read only." : ", Enter edits, Escape cancels, Tab moves on. Alt with an arrow key resizes."}</p>
         </>
       )}
 

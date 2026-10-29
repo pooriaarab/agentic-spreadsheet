@@ -10,6 +10,13 @@ export const MIN_ROWS = 30;
 const MAX_COLS = 52;
 const MAX_ROWS = 200;
 
+// Sizes in pixels.
+export const COL_WIDTH = 112;
+export const ROW_HEIGHT = 28;
+export const ROW_HEAD = 48;
+const LIMITS = { cols: [40, 640], rows: [22, 240] } as const;
+export const clampSize = (axis: "cols" | "rows", size: number): number => Math.round(Math.min(LIMITS[axis][1], Math.max(LIMITS[axis][0], size)));
+
 export const address = ({ row, col }: Pos): string => `${colLetters(col)}${row}`;
 
 // The size of the grid to show: the used range plus room to grow.

@@ -5,6 +5,18 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.11.0] - 2026-10-29
+
+### Added
+
+- The grid resizes columns and rows: drag the edge of a header, press Alt with an arrow key on a cell, or double click an edge to reset. Sizes last as long as the view.
+- A blank sheet shows a short hint on how to start.
+
+### Changed
+
+- A calmer look, after [tinylittleoffice](https://tinylittleoffice.com) (MIT): one dense toolbar with quiet buttons, a formula bar with a name box and `fx` in one frame, light headers, a tinted selection with an accent edge, and sheet tabs under the grid. All colors, spaces, and type come from `agentic-design` tokens.
+- The `agentic-design` dependency is now `^0.5.0`.
+
 ## [0.10.0] - 2026-10-29
 
 ### Added

@@ -76,7 +76,7 @@ describe("mount", () => {
     expect(host.querySelector("input.as-editor")).toBeNull();
     expect(write).not.toHaveBeenCalled();
     expect(host.querySelector('[role="grid"]')?.getAttribute("aria-readonly")).toBe("true");
-    expect((host.querySelector("label")?.control as HTMLInputElement | null)?.readOnly).toBe(true);
+    expect(host.querySelector<HTMLInputElement>('input[aria-label="Formula bar"]')?.readOnly).toBe(true);
     for (const name of ["Insert row", "Delete row", "Insert column", "Delete column", "Add sheet"]) expect(button(name).disabled).toBe(true);
   });
 
