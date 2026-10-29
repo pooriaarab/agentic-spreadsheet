@@ -46,7 +46,7 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   app.get("/health", (c) => c.json({ ok: true, pack, version: VERSION }));
 
   const access = createAccess(store);
-  // Who may use a book: a principal with no role sees "no workbook", so a name is no secret to guess.
+  // Who may use a book: a principal with no role sees "no workbook", as for a missing book. `list` still names every book (see the README).
   async function guard(who: Principal, action: "read" | "write" | "admin", book: string): Promise<Response | null> {
     const { allowed, role } = await access.role(who, action, book);
     if (allowed) return null;

@@ -83,7 +83,9 @@ A request body is at most 5 MB. `GET /health` needs no key.
 A workbook has an owner: the principal that made it. The owner shares it with a principal id and a role.
 A viewer or commenter reads. An editor reads and writes. Only the owner shares. `agentic-identity` keeps the
 roles and writes an audit entry for each check. A principal with no role gets 404, as for a book that does not
-exist. A principal with a role that is too low gets 403.
+exist. A principal with a role that is too low gets 403. A share follows the principal id, whatever the kind.
+The owner cannot lower its own role. Each check adds an audit entry to the store, and nothing limits how many.
+If the Worker fails after it saves a new workbook and before it records the owner, the book has no owner.
 
 ## Features
 

@@ -53,6 +53,25 @@ describe("workbook access", () => {
     expect((await call(a, "ana", "DELETE", "/b/share/ana")).status).toBe(400);
   });
 
+  test("the owner cannot lower itself, a commenter only reads, and a non-owner cannot unshare", async () => {
+    const a = app();
+    await call(a, "ana", "POST", "", { book: "b" });
+    expect((await call(a, "ana", "PUT", "/b/share", { subject: "ana", role: "viewer" })).status).toBe(400);
+    expect((await call(a, "ana", "PUT", "/b/range", { anchor: "A1", values: [[1]] })).status).toBe(200);
+    await call(a, "ana", "PUT", "/b/share", { subject: "cy", role: "commenter" });
+    expect((await call(a, "cy", "GET", "/b/range?range=A1")).status).toBe(200);
+    expect((await call(a, "cy", "PUT", "/b/range", { anchor: "A1", values: [[2]] })).status).toBe(403);
+    expect((await call(a, "cy", "DELETE", "/b/share/ana")).status).toBe(403);
+    expect((await call(a, "eve", "DELETE", "/b/share/cy")).status).toBe(404);
+  });
+
+  test("a share follows the principal id, whatever the kind", async () => {
+    const a = app();
+    await call(a, "ana", "POST", "", { book: "b" });
+    const res = await a.request("/api/v1/sheets/b/range?range=A1", { headers: as("ana", "agent") });
+    expect(res.status).toBe(200);
+  });
+
   test("an agent that creates a book owns it", async () => {
     const a = app();
     expect((await call(a, "bot", "POST", "", { book: "mine" }, )).status).toBe(201);
