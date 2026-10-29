@@ -11,8 +11,10 @@ Keywords: spreadsheet,sheets,formulas,grid,collaboration,agents,mcp,cli,csv,xlsx
   A failed call throws SheetsApiError with status and code (bad_request, unauthorized, forbidden,
   not_found, conflict, too_large, server_error, or unknown for another status). No retries. Pass
   { signal } to cancel.
-- Web UI: run npm run build, then npx wrangler dev, and open the printed address. Sign in with an API key.
-  It uses the typed client, agentic-design, and a presence room from agentic-realtime. See README, "UI".
+- Web UI: from a checkout of this repo, run npm ci, npm run build, then npx wrangler dev, and open the printed
+  address. Sign in with an API key. The npm package ships the UI files in dist/ui, but not wrangler.jsonc,
+  so the Worker runs from the repo. It uses the typed client, agentic-design, and a presence room from
+  agentic-realtime. See README, "UI".
 - CLI and MCP: run agentic-spreadsheet --help, or agentic-spreadsheet mcp.
 
 ## Docs
