@@ -111,6 +111,7 @@ export class Workbook {
   private layouts = new Map<YSheet, Partial<Record<Axis, Layout>>>();
   private readonly shown = new Map<string, string>();
   // True when a sheet that has an id holds a cell key in the old A1 form. Such a cell reads as empty.
+  // On purpose, the flag stays set until the workbook is loaded again.
   private oldKeys = false;
 
   constructor(doc: Y.Doc = new Y.Doc()) {
@@ -136,8 +137,8 @@ export class Workbook {
     let full = 0;
     for (const tag of this.doc.getMap("conversions").keys()) {
       if (!tag.startsWith("late:")) full += 1;
-      else if (late.has(tag.split(":")[1])) return true;
-      else late.add(tag.split(":")[1]);
+      else if (late.has(tag.slice(5, tag.lastIndexOf(":")))) return true;
+      else late.add(tag.slice(5, tag.lastIndexOf(":")));
     }
     return full > 1;
   }
@@ -215,6 +216,7 @@ export class Workbook {
     // The stored form marks refs with U+0001 and U+0002. A formula that holds either would read as a
     // ref after the conversion. Check before any change, so a refusal leaves the workbook as it was.
     for (const sheet of legacy) {
+      if (typeof sheet.get("name") !== "string") throw new SheetError("a sheet in the old A1 form has no name, so it cannot convert");
       for (const [key, value] of this.cells(sheet)) {
         if (key.endsWith(":c") && isFormula(value) && hasControl(value)) {
           throw new SheetError(`cell ${key.slice(0, -2)} on sheet "${sheet.get("name")}" holds a formula with a control character (U+0001 or U+0002), which the conversion cannot keep; remove the character in the version that saved it, then load it again`);

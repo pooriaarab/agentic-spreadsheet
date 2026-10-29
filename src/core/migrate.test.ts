@@ -266,6 +266,19 @@ describe("conversion guards", () => {
     expect(() => one.readRange("Late", "A1:A1")).toThrow(/two copies converted/);
   });
 
+  test("a late sheet with no name is refused, and names with a colon are told apart", () => {
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, Workbook.fromState(legacyState()).encode());
+    const sheet = new Y.Map<unknown>();
+    sheet.set("cells", new Y.Map());
+    doc.getArray("sheets").push([sheet]);
+    expect(() => new Workbook(doc)).toThrow(/has no name/);
+    const clash = new Workbook(new Y.Doc());
+    clash.doc.getMap("conversions").set("late:a:x", true);
+    clash.doc.getMap("conversions").set("late:a:b:y", true);
+    expect(clash.conversionClash()).toBe(false);
+  });
+
   test("an old formula with a control character is refused, not changed", () => {
     for (const char of ["\u0001", "\u0002"]) {
       const doc = oldSheet();
