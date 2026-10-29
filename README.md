@@ -99,7 +99,13 @@ serves `dist/ui` and wrangler needs that directory. Then run `npx wrangler dev`.
 Workbooks live in a D1 database (binding `DB`) and an R2 bucket (binding `BLOBS`), both declared in
 `wrangler.jsonc`. They survive a restart. `wrangler dev` keeps them in `.wrangler/state`. To deploy, create the
 database and the bucket (commands are in `wrangler.jsonc`), put the database id in the file, and set
-`SHEETS_REGION` to `eu` or `us`. The Worker answers 500 if a binding or the region is missing.
+`SHEETS_REGION` to `eu` or `us`. The Worker answers 500 if a binding or the region is missing, and that includes
+`/health`.
+
+The shipped `wrangler.jsonc` is for the EU: a bucket with the `eu` jurisdiction, and a database made with
+`--location weur`. For `us`, create the database with a US location, drop the jurisdiction from the bucket, and set
+`SHEETS_REGION=us`. D1 reports where it served each query, and the store refuses a mismatch with the claim (the
+Worker answers 500). R2 cannot report its jurisdiction, so nothing checks the bucket: keep the claim and the bucket in step.
 
 ```sh
 # one key, at least 32 bytes, tied to one id and kind

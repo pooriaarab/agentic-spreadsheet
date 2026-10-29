@@ -1,5 +1,6 @@
 // Start `wrangler dev` for the E2E tests: the API, the UI files in dist/ui, and the presence room.
-// Data lives in a fresh local D1 and R2 under the private home, so each run starts empty. No telemetry, and a private home for wrangler.
+// Data lives in a fresh local D1 and R2 under the private home. Each run starts empty.
+// No telemetry, and a private home for wrangler.
 import { spawn } from "node:child_process";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";

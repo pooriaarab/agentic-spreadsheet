@@ -4,7 +4,7 @@ import { z } from "zod";
 import { createAccess, NoShare, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
-import { assertRegion, EraseRefusedError, parseRegion, type Blobs, type Region, type Store } from "agentic-identity";
+import { EraseRefusedError, parseRegion, type Blobs, type Region, type Store } from "agentic-identity";
 import { createD1Store, createR2Blobs, D1_SCHEMA, type D1Like, type R2Like } from "agentic-identity/cloudflare";
 import { message, OpError, OPS, removeWorkbook } from "./ops.js";
 import { VERSION } from "./version.js";
@@ -133,6 +133,8 @@ export function createApp({ store, blobs, authenticate, pack = "agentic-spreadsh
   app.onError((error, c) => {
     if (error instanceof EraseRefusedError) return c.json({ error: error.message }, 409);
     if (error instanceof OpError) return c.json({ error: error.message }, error.status);
+    // The D1 adapter throws a plain Error when D1 serves a query from outside the claimed region. That is a deployment fault, not a bad request.
+    if (/outside the declared region/.test(error.message)) return c.json({ error: "the database is outside the declared region" }, 500);
     if (error instanceof SheetError || error.constructor === Error) return c.json({ error: error.message }, 400);
     console.error("sheets api error", error.name);
     return c.json({ error: "something failed on the server" }, 500);
@@ -154,28 +156,31 @@ function regionOf(env: WorkerEnv): Region {
   return region;
 }
 
-const schemas = new WeakMap<object, Promise<unknown>>();
+// One store and one blob client for each D1 binding and region, so a transaction queue and the schema check live as long as the isolate.
+const storages = new WeakMap<object, { region: Region; ready: Promise<{ store: Store; blobs: Blobs }> }>();
 // The adapter needs a signing secret. This package never makes signed URLs, so a secret that lives and dies with the isolate is enough.
 let urlSecret: string | undefined; // made on first use: a Worker may not make random values at load
 
 // The store over D1 and the blobs over R2. It throws ConfigError when the bindings or the region are not set.
+// The region is a claim. D1 reports where it served a query, and the store refuses a mismatch. An R2 binding
+// cannot report its jurisdiction, so nothing checks the bucket against the claim: keep wrangler.jsonc in step.
 export async function storageFor(env: WorkerEnv): Promise<{ store: Store; blobs: Blobs }> {
   const { DB: db, BLOBS: bucket } = env;
   if (!db || !bucket) throw new ConfigError("bind a D1 database as DB and an R2 bucket as BLOBS");
   const region = regionOf(env);
-  let ready = schemas.get(db);
-  if (!ready) {
-    ready = db.prepare(D1_SCHEMA).run().catch((error: unknown) => {
-      schemas.delete(db);
-      throw error;
-    });
-    schemas.set(db, ready);
+  let entry = storages.get(db);
+  if (entry?.region !== region) {
+    const ready = (async () => {
+      await db.prepare(D1_SCHEMA).run();
+      const store = createD1Store(db, { region });
+      const blobs = createR2Blobs(bucket, { region, urlBase: "https://invalid.example/unused", urlSecret: (urlSecret ??= `${crypto.randomUUID()}${crypto.randomUUID()}`) });
+      return { store, blobs };
+    })();
+    entry = { region, ready };
+    storages.set(db, entry);
+    ready.catch(() => storages.get(db) === entry && storages.delete(db));
   }
-  await ready;
-  const store = createD1Store(db, { region });
-  const blobs = createR2Blobs(bucket, { region, urlBase: "https://invalid.example/unused", urlSecret: (urlSecret ??= `${crypto.randomUUID()}${crypto.randomUUID()}`) });
-  assertRegion(region, store, blobs);
-  return { store, blobs };
+  return entry.ready;
 }
 
 let cached: { keys?: string; unsafe?: string; auth: Authenticator } | undefined;

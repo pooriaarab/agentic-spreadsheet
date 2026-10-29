@@ -21,7 +21,7 @@ import { afterAll, beforeAll, describe, expect, test } from "vitest";
 // - a formula over ten 1,000,000-cell ranges is computed in full
 // - two far-apart cells (A1 and XFD1048576) make export build a huge grid, or kill the Worker
 // - export is not CSV, or a response can be cached
-// - a workbook is gone after the Worker restarts, or a restart gives another Worker's data to a new store
+// - a workbook is gone after the Worker restarts, or a Worker on a new directory sees another Worker's data
 // - the Worker serves with no region, with the region "unknown" and no unsafe flag, or with a bad region
 // - /health reports a version other than package.json
 
@@ -269,6 +269,12 @@ describe("storage", () => {
     // The share table is durable too: Ana still owns the book, and the bot has no role on it.
     expect((await call("second", "GET", `${API}/kept/range?range=A1`, as(KEY_A))).status).toBe(404);
     expect((await call("second", "POST", API, { ...as(KEY_H), body: { book: "kept" } })).status).toBe(409);
+  }, 120_000);
+
+  test("a Worker on a new state directory starts empty", async () => {
+    servers.fresh = await start({ SHEETS_API_KEYS: KEYS });
+    expect((await call("fresh", "GET", `${API}/kept/range?range=A1`, as(KEY_H))).status).toBe(404);
+    expect((await call("fresh", "GET", API, as(KEY_H))).json().books ?? []).toEqual([]);
   }, 120_000);
 
   test.each([
