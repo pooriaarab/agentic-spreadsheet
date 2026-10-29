@@ -170,3 +170,64 @@ describe("a workbook saved with A1 keys", () => {
     expect(grid(a, "C6:C6")).toEqual([["=A3"]]);
   });
 });
+
+// Failure modes for the conversion guards, listed before the code:
+// - a sheet with an id that holds an old-form key reads that cell as empty, with no error
+// - an old-form key that arrives later, from a merge, is skipped the same way
+// - a converted workbook that gets a sheet without an id converts to a clash when it loads again
+// - an old formula with U+0001 or U+0002 reads as a ref after the conversion
+describe("conversion guards", () => {
+  const oldSheet = () => {
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, legacyState());
+    return doc;
+  };
+
+  test("an old-form key on a sheet that has an id is an error", () => {
+    const doc = new Y.Doc();
+    Y.applyUpdate(doc, Workbook.fromState(legacyState()).encode());
+    const cells = (doc.getArray("sheets").get(0) as Y.Map<unknown>).get("cells") as Y.Map<unknown>;
+    cells.set("A1:c", "lost");
+    const state = Y.encodeStateAsUpdate(doc);
+    const wb = Workbook.fromState(state);
+    expect(() => wb.readRange("Sheet1", "A1:A1")).toThrow(/old A1 form/);
+    expect(() => wb.sheetNames()).toThrow(/old A1 form/);
+  });
+
+  test("an old-form key that arrives after the load is an error", () => {
+    const wb = Workbook.fromState(legacyState());
+    const other = new Y.Doc();
+    Y.applyUpdate(other, wb.encode());
+    ((other.getArray("sheets").get(0) as Y.Map<unknown>).get("cells") as Y.Map<unknown>).set("B9:c", "lost");
+    Y.applyUpdate(wb.doc, Y.encodeStateAsUpdate(other));
+    expect(() => wb.readRange("Sheet1", "A1:A1")).toThrow(/old A1 form/);
+  });
+
+  test("a converted workbook that gets a sheet without an id converts again and does not clash", () => {
+    const wb = Workbook.fromState(legacyState());
+    const extra = new Y.Doc();
+    const sheet = new Y.Map<unknown>();
+    sheet.set("name", "Late");
+    const cells = new Y.Map<unknown>();
+    cells.set("A1:c", 7);
+    cells.set("A1:by", stampOf("u1", "human"));
+    sheet.set("cells", cells);
+    sheet.set("widths", new Y.Map());
+    extra.getArray("sheets").push([sheet]);
+    Y.applyUpdate(wb.doc, Y.encodeStateAsUpdate(extra));
+    expect(() => wb.sheetNames()).toThrow(/old A1 form/);
+    const again = Workbook.fromState(wb.encode());
+    expect(again.conversionClash()).toBe(false);
+    expect(grid(again, "A1:A1", "Late")).toEqual([[7]]);
+    expect(grid(again, "A1:A1")).toEqual([[10]]);
+  });
+
+  test("an old formula with a control character is refused, not changed", () => {
+    for (const char of ["\u0001", "\u0002"]) {
+      const doc = oldSheet();
+      const cells = (doc.getArray("sheets").get(0) as Y.Map<unknown>).get("cells") as Y.Map<unknown>;
+      cells.set("E1:c", `="a${char}b"&A1`);
+      expect(() => Workbook.fromState(Y.encodeStateAsUpdate(doc))).toThrow(/control character/);
+    }
+  });
+});

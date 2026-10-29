@@ -148,6 +148,8 @@ If the Worker fails after it saves a new workbook and before it records the owne
   A clash that was saved cannot be repaired in place. Restore the workbook from a copy saved before it.
   Old A1-keyed state that a sync provider delivers after the workbook is made is refused with an
   error. Load it with `Workbook.fromState` instead.
+  A sheet that has an id but holds an old A1 cell key is refused with an error, because that cell would
+  read as empty. An old formula that holds U+0001 or U+0002 does not convert: the load throws.
 - A single ref follows a moved row. A range keeps the rows that stay between its ends: a row that
   moves out of a range leaves it, and a row that moves in joins it.
 - Two inserts made at once can push a cell past the last row. The workbook keeps the cell, but no
