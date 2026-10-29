@@ -4,7 +4,8 @@ import { z } from "zod";
 import { createAccess, NoShare, SHARE_ROLES, SUBJECT_KIND_NAMES, type ShareRole } from "./access.js";
 import { authFromEnv, ConfigError, type Authenticator, type AuthEnv } from "./auth.js";
 import { SheetError, type Principal } from "./core/workbook.js";
-import { EraseRefusedError, hasScope, parseRegion, type Blobs, type Role, type Region, type Store } from "agentic-identity";
+import { EraseRefusedError, hasScope, parseRegion, type Auth, type Blobs, type PrincipalContext, type Role, type Region, type Store } from "agentic-identity";
+import { principalFromWebSocketRequest } from "agentic-identity/http";
 import { createD1Store, createR2Blobs, D1_SCHEMA, type D1Like, type R2Like } from "agentic-identity/cloudflare";
 import { message, OpError, OPS, removeWorkbook } from "./ops.js";
 import { VERSION } from "./version.js";
@@ -222,15 +223,36 @@ export function roomRole(role: Role, scopes: string[] | undefined): Role {
   return !may("write") ? "viewer" : role === "owner" && !may("admin") ? "editor" : role;
 }
 
-// Who may join the presence room of a book, and as what. A browser cannot set a header on a
-// WebSocket, so the key may also come in the `token` query parameter. The room carries presence only:
-// cells travel through the API. A principal with no read right on the book gets null.
+// The subprotocol of the presence room. A browser offers `agentic-spreadsheet` and `agentic-spreadsheet.bearer.<token>`,
+// and the answer names the first one only.
+export const WS_PROTOCOL = "agentic-spreadsheet";
+
+// Who may join the presence room of a book, and as what. A browser cannot set a header on a WebSocket, so the key comes
+// in a subprotocol entry, and the Authorization header still works for other clients. The `token` query parameter is
+// deprecated: URLs reach logs and proxies. It works for one more release and only when the request offers no key of
+// the new kind. The room carries presence only: cells travel through the API. A principal with no read right on the book gets null.
 export async function roomGrant(request: Request, book: string, env: WorkerEnv) {
   const headers = new Headers(request.headers);
   const token = new URL(request.url).searchParams.get("token");
-  if (!headers.has("authorization") && token !== null) headers.set("authorization", `Bearer ${token}`);
+  const offersKey = (headers.get("sec-websocket-protocol") ?? "").includes(`${WS_PROTOCOL}.bearer.`);
+  if (!headers.has("authorization") && !offersKey && token !== null) headers.set("authorization", `Bearer ${token}`);
   const { store } = await storageFor(env);
-  const who = await (await authenticatorFor(env, store))(new Request(request.url, { headers }));
+  const authenticate = await authenticatorFor(env, store);
+  // The helper reads the subprotocol and calls this port with the key as a bearer header. The caller keeps its scopes.
+  const seen = new WeakMap<PrincipalContext, Awaited<ReturnType<Authenticator>>>();
+  const port: Auth = {
+    async authenticate(req) {
+      const found = await authenticate(req);
+      if (found === null) return null;
+      const context: PrincipalContext = { principalId: found.id, kind: found.kind, chain: [], scopes: found.scopes ?? [] };
+      seen.set(context, found);
+      return context;
+    },
+  };
+  const context = await principalFromWebSocketRequest(new Request(request.url, { method: request.method, headers }), port, { protocol: WS_PROTOCOL });
+  // A failed credential read is an error, not a wrong key: a 5xx throws, and a 401 or 403 is no access.
+  if (context instanceof Response && context.status >= 500) throw new Error(`the room could not check the key (status ${context.status})`);
+  const who = context instanceof Response ? null : (seen.get(context) ?? null);
   if (who === null) return null;
   const principal = { id: who.id, kind: who.kind };
   const { allowed, role } = await createAccess(store).role(principal, "read", book);

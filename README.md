@@ -250,7 +250,7 @@ sheet.unmount(); // remove the sheet and stop its polling
   the server checks every write against the key of the client. The name shows in the presence room.
 - `readOnly` turns off cell edits, the formula bar, and the row, column, and sheet buttons.
 - `token` is optional. With it, the sheet joins the presence room on the origin of the page, and it sends
-  the key in the query string of that socket. Do not pass `token` when the page and the Worker use
+  the key in a WebSocket subprotocol entry, not in the URL. Do not pass `token` when the page and the Worker use
   different origins. Without it, the sheet shows no peers. See "Hosting" below for what presence needs.
 - `onUnauthorized` runs when the server rejects the key.
 - A React app can use the `WorkbookView` component from the same entry instead. Put it inside the
@@ -291,8 +291,9 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
   Screenshots of each view in both themes are in [`docs/screenshots`](https://github.com/pooriaarab/agentic-spreadsheet/tree/main/docs/screenshots).
   Run `UPDATE_SCREENSHOTS=1 npm run test:e2e` to make them again.
 - **Limits.** The grid shows the used range plus some room, up to 52 columns and 200 rows. The browser
-  sends the key as a `token` query parameter when it joins a room, because a browser cannot set a header on a
-  WebSocket. Use HTTPS, and keep Worker logs private. There is no sign-in page for a person
+  sends the key in the `agentic-spreadsheet.bearer.<key>` subprotocol entry when it joins a room, because a
+  browser cannot set a header on a WebSocket. The `token` query parameter still works but is deprecated, and
+  the next release removes it. Use HTTPS, and keep Worker logs private. There is no sign-in page for a person
   yet: the key is the sign-in.
 - **Hosting.** The npm package ships the UI files in `dist/ui`, but not the Worker that serves them.
   Read the files by path, from `node_modules/agentic-spreadsheet/dist/ui`. `exports` does not list them.
