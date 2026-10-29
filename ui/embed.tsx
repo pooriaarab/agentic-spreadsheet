@@ -1,11 +1,9 @@
 // The spreadsheet for an app that embeds it: `agentic-spreadsheet/ui`. The app gives an element, a client, a workbook id,
 // and the principal who uses the sheet. React and react-dom are peer dependencies. Add `agentic-spreadsheet/ui.css` once.
 import { createRoot } from "react-dom/client";
-import { ThemeProvider, ToastProvider, TooltipProvider } from "agentic-design/react";
-import "agentic-design/styles.css";
+import { ToastProvider, TooltipProvider } from "agentic-design/react";
 import type { PrincipalKind, SheetsClient } from "../src/client.js";
 import { SheetView } from "./SheetView.js";
-import "./app.css";
 
 export type { PrincipalKind, SheetsClient };
 
@@ -32,6 +30,13 @@ export interface MountOptions {
 }
 
 /** A principal must have a known kind and a name. A missing kind is an error, never a default. */
+function checkOptions(options: MountOptions): void {
+  const { client, docId } = options;
+  if (typeof client?.sheets !== "function" || typeof client.read !== "function") throw new TypeError("the sheet needs a client from createClient");
+  if (typeof docId !== "string" || docId === "") throw new TypeError("the sheet needs a docId that is a non-empty string");
+  checkPrincipal(options.principal);
+}
+
 function checkPrincipal(principal: EmbedPrincipal): void {
   if (!principal || !PRINCIPAL_KINDS.includes(principal.kind) || typeof principal.name !== "string" || principal.name.trim() === "") {
     throw new TypeError(`the sheet needs a principal with a kind (${PRINCIPAL_KINDS.join(", ")}) and a name`);
@@ -55,22 +60,21 @@ export interface MountedSheet {
 
 /** Render the sheet into an element, for an app that does not use React itself. */
 export function mount(element: HTMLElement, options: MountOptions): MountedSheet {
-  checkPrincipal(options.principal);
+  if (!(element instanceof HTMLElement)) throw new TypeError("mount needs an element to render into");
+  checkOptions(options);
   const root = createRoot(element);
   let open = true;
   const render = (next: MountOptions) =>
     root.render(
-      <ThemeProvider>
-        <TooltipProvider>
-          <ToastProvider>
-            <WorkbookView key={next.docId} {...next} />
-          </ToastProvider>
-        </TooltipProvider>
-      </ThemeProvider>,
+      <TooltipProvider>
+        <ToastProvider>
+          <WorkbookView key={next.docId} {...next} />
+        </ToastProvider>
+      </TooltipProvider>,
     );
   render(options);
   return {
-    update: (next) => (checkPrincipal(next.principal), open && render(next)),
+    update: (next) => (checkOptions(next), open && render(next)),
     unmount: () => {
       if (!open) return;
       open = false;

@@ -62,7 +62,7 @@ describe("mount", () => {
     const a1 = cell("1,1");
     await act(async () => a1.focus());
     await act(async () => void a1.dispatchEvent(new KeyboardEvent("keydown", { key: "9", bubbles: true })));
-    const editor = host.querySelector<HTMLInputElement>("input.editor")!;
+    const editor = host.querySelector<HTMLInputElement>("input.as-editor")!;
     expect(editor.value).toBe("9");
     await act(async () => void editor.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true })));
     expect(write).toHaveBeenCalledWith({ book: "budget", sheet: "Sheet1", anchor: "A1", values: [[9]] });
@@ -73,10 +73,10 @@ describe("mount", () => {
     await show({ client, docId: "budget", readOnly: true });
     const a1 = cell("1,1");
     for (const key of ["Enter", "F2", "Delete", "x"]) await act(async () => void a1.dispatchEvent(new KeyboardEvent("keydown", { key, bubbles: true })));
-    expect(host.querySelector("input.editor")).toBeNull();
+    expect(host.querySelector("input.as-editor")).toBeNull();
     expect(write).not.toHaveBeenCalled();
     expect(host.querySelector('[role="grid"]')?.getAttribute("aria-readonly")).toBe("true");
-    expect(host.querySelector<HTMLInputElement>('input[aria-label="Formula bar"], input')?.readOnly).toBe(true);
+    expect((host.querySelector("label")?.control as HTMLInputElement | null)?.readOnly).toBe(true);
     for (const name of ["Insert row", "Delete row", "Insert column", "Delete column", "Add sheet"]) expect(button(name).disabled).toBe(true);
   });
 
@@ -86,6 +86,27 @@ describe("mount", () => {
     const bad = [{ name: "Ada" }, { kind: "root", name: "Ada" }, { kind: "agent", name: " " }, undefined];
     for (const principal of bad) expect(() => mount(host, { client, docId: "b", principal: principal as never })).toThrow(TypeError);
     expect(host.childElementCount).toBe(0);
+  });
+
+  it("refuses a bad element, client, or docId", () => {
+    const { client } = fakeClient();
+    expect(() => mount(null as never, { client, docId: "b", principal: ada })).toThrow(TypeError);
+    host = document.createElement("div");
+    for (const docId of ["", 5 as never]) expect(() => mount(host, { client, docId, principal: ada })).toThrow(TypeError);
+    expect(() => mount(host, { client: {} as never, docId: "b", principal: ada })).toThrow(TypeError);
+  });
+
+  it("closes an open edit when the sheet turns read only, and keeps the sheet on another callback", async () => {
+    const { client, write, sheets } = fakeClient();
+    await show({ client, docId: "budget" });
+    const a1 = cell("1,1");
+    await act(async () => void a1.dispatchEvent(new KeyboardEvent("keydown", { key: "9", bubbles: true })));
+    expect(host.querySelector("input.as-editor")).not.toBeNull();
+    const loads = sheets.mock.calls.length;
+    await act(async () => mounted!.update({ client, docId: "budget", principal: ada, readOnly: true, onUnauthorized: () => {} }));
+    expect(host.querySelector("input.as-editor")).toBeNull();
+    expect(write).not.toHaveBeenCalled();
+    expect(sheets.mock.calls.length).toBe(loads);
   });
 
   it("shows the error and offers a retry when the workbook cannot load", async () => {

@@ -49,12 +49,15 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
   const request = useRef(0);
   const { peers, live } = usePresence(book, token, address(sel), name);
 
+  const unauthorized = useRef(onUnauthorized);
+  unauthorized.current = onUnauthorized;
+
   const fail = useCallback(
     (error: unknown, what: string) => {
-      if (isUnauthorized(error)) return onUnauthorized();
+      if (isUnauthorized(error)) return unauthorized.current();
       toast({ title: what, description: errorText(error), tone: "danger" });
     },
-    [onUnauthorized, toast],
+    [toast],
   );
 
   // Read the sheet list and the cells of one sheet. A silent read keeps what is on screen if it fails.
@@ -72,13 +75,16 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
         setActive(current.name);
         setView({ status: "ready", data: { cols, rows, values: read.values, formulas: read.formulas, authors: read.authors } });
       } catch (error) {
-        if (isUnauthorized(error)) return onUnauthorized();
+        if (isUnauthorized(error)) return unauthorized.current();
         if (!silent && id === request.current) setView({ status: "error", message: errorText(error) });
       }
     },
-    [client, book, onUnauthorized],
+    [client, book],
   );
   useEffect(() => void load(null), [load]);
+
+  // A switch to read only closes an open edit.
+  useEffect(() => void (readOnly && setDraft(null)), [readOnly]);
 
   const editing = draft !== null;
   useEffect(() => {
@@ -108,6 +114,7 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
   // Write the draft to the selected cell, then move.
   async function commit(text: string, next: Pos) {
     setDraft(null);
+    if (readOnly) return;
     move(next);
     if (text === rawAt(sel)) return;
     try {
@@ -224,25 +231,25 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
 
   const here = address(sel);
   return (
-    <section className="sheet" aria-label={`Workbook ${book}`}>
-      <div className="row between">
+    <section className="as-sheet" aria-label={`Workbook ${book}`}>
+      <div className="as-row as-between">
         <h1>{book}</h1>
-        <div className="row">
-          <span className="muted" role="status">{live === "connected" ? "Live" : live === "connecting" ? "Connecting…" : "Offline"}</span>
+        <div className="as-row">
+          <span className="as-muted" role="status">{live === "connected" ? "Live" : live === "connecting" ? "Connecting…" : "Offline"}</span>
           <PresenceStack entries={peers.map((p) => p.entry)} label="Also here" />
         </div>
       </div>
 
-      {view.status === "loading" && <p role="status" className="muted">Loading sheet…</p>}
+      {view.status === "loading" && <p role="status" className="as-muted">Loading sheet…</p>}
       {view.status === "error" && (
-        <div role="alert" className="banner">
+        <div role="alert" className="as-banner">
           <p>Could not load the sheet: {view.message}</p>
           <Button size="sm" variant="secondary" onClick={() => void load(active)}>Try again</Button>
         </div>
       )}
       {data !== null && (
         <>
-          <nav className="row tabs" aria-label="Sheets">
+          <nav className="as-row as-tabs" aria-label="Sheets">
             {sheets.map((name) => (
               <Button key={name} size="sm" variant={name === active ? "primary" : "secondary"} aria-current={name === active ? "true" : undefined} onClick={() => (setSel({ row: 1, col: 1 }), void load(name))}>
                 {name}
@@ -251,14 +258,14 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
             <Button size="sm" variant="ghost" disabled={readOnly} onClick={() => (setSheetError(undefined), setDialog("add"))}>Add sheet</Button>
             <Button size="sm" variant="ghost" disabled={readOnly || sheets.length < 2} onClick={() => setDialog("delete")}>Delete sheet</Button>
           </nav>
-          <div role="group" aria-label="Rows and columns" className="row">
+          <div role="group" aria-label="Rows and columns" className="as-row">
             <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not insert the row", () => client.insertRows({ ...sheetTarget, at: sel.row }))}>Insert row</Button>
             <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not delete the row", () => client.deleteRows({ ...sheetTarget, at: sel.row }))}>Delete row</Button>
             <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not insert the column", () => client.insertCols({ ...sheetTarget, at: sel.col }))}>Insert column</Button>
             <Button size="sm" variant="secondary" disabled={readOnly} onClick={() => void structure("Could not delete the column", () => client.deleteCols({ ...sheetTarget, at: sel.col }))}>Delete column</Button>
           </div>
-          <div className="bar">
-            <span className="namebox"><span className="sr-only">Selected cell </span>{here}</span>
+          <div className="as-bar">
+            <span className="as-namebox"><span className="as-sr-only">Selected cell </span>{here}</span>
             <Input
               label="Formula bar"
               autoComplete="off"
@@ -270,20 +277,20 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
               onBlur={(e) => draft?.where === "bar" && e.relatedTarget !== null && void commit(draft.text, sel)}
             />
           </div>
-          <div className="scroller">
-            <table ref={grid} role="grid" aria-readonly={readOnly || undefined} className="grid" aria-label={`${active}, spreadsheet`} aria-rowcount={data.rows} aria-colcount={data.cols}>
+          <div className="as-scroller">
+            <table ref={grid} role="grid" aria-readonly={readOnly || undefined} className="as-grid" aria-label={`${active}, spreadsheet`} aria-rowcount={data.rows} aria-colcount={data.cols}>
               <thead>
                 <tr>
-                  <th scope="col" className="corner"><span className="sr-only">Row</span></th>
+                  <th scope="col" className="as-corner"><span className="as-sr-only">Row</span></th>
                   {Array.from({ length: data.cols }, (_, c) => (
-                    <th key={c} scope="col" className={c + 1 === sel.col ? "on" : undefined}>{colLetters(c + 1)}</th>
+                    <th key={c} scope="col" className={c + 1 === sel.col ? "as-on" : undefined}>{colLetters(c + 1)}</th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 {Array.from({ length: data.rows }, (_, r) => (
                   <tr key={r}>
-                    <th scope="row" className={r + 1 === sel.row ? "on" : undefined}>{r + 1}</th>
+                    <th scope="row" className={r + 1 === sel.row ? "as-on" : undefined}>{r + 1}</th>
                     {Array.from({ length: data.cols }, (_, c) => {
                       const pos = { row: r + 1, col: c + 1 };
                       const value = data.values[r]?.[c] ?? null;
@@ -293,12 +300,12 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
                       const isSel = pos.row === sel.row && pos.col === sel.col;
                       const others = cursors.get(addr);
                       const label = [`${addr}: ${show(value) || "empty"}`, formula && `formula ${formula}`, author?.machine && `written by agent ${author.id}`, others && `also here: ${others.join(", ")}`].filter(Boolean).join(", ");
-                      const cls = ["cell", typeof value === "number" && "num", isError(value) && "bad", author?.machine && "agent", others && "peer", isSel && "sel"].filter(Boolean).join(" ");
+                      const cls = ["as-cell", typeof value === "number" && "as-num", isError(value) && "as-bad", author?.machine && "as-agent", others && "as-peer", isSel && "as-sel"].filter(Boolean).join(" ");
                       return (
                         <td key={c} role="gridcell" data-pos={`${pos.row},${pos.col}`} aria-label={editing && isSel && draft.where === "cell" ? undefined : label} aria-selected={isSel} tabIndex={isSel ? 0 : -1} className={cls} onKeyDown={onCellKey} onClick={() => !(isSel && draft?.where === "cell") && (draft !== null && void commit(draft.text, pos), draft === null && move(pos))}>
                           {isSel && draft?.where === "cell" ? (
                             <input
-                              className="editor"
+                              className="as-editor"
                               aria-label={`Edit ${addr}`}
                               autoFocus
                               value={draft.text}
@@ -310,8 +317,8 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
                           ) : (
                             <>
                               {show(value)}
-                              {author?.machine && <BotIcon className="mark" aria-hidden="true" />}
-                              {others && <span className="tag">{others[0]}</span>}
+                              {author?.machine && <BotIcon className="as-mark" aria-hidden="true" />}
+                              {others && <span className="as-tag">{others[0]}</span>}
                             </>
                           )}
                         </td>
@@ -322,12 +329,12 @@ export function SheetView({ client, book, token, name = "Me", readOnly = false, 
               </tbody>
             </table>
           </div>
-          <p className="muted legend"><BotIcon className="mark" aria-hidden="true" /> A cell with this mark was written by an agent. Arrow keys move, Enter edits, Escape cancels, Tab moves on.</p>
+          <p className="as-muted as-legend"><BotIcon className="as-mark" aria-hidden="true" /> A cell with this mark was written by an agent. Arrow keys move, Enter edits, Escape cancels, Tab moves on.</p>
         </>
       )}
 
       <Dialog open={dialog === "add"} onOpenChange={(open) => !open && setDialog(null)} title="Add sheet" description="Each sheet in a workbook needs its own name.">
-        <form className="stack" onSubmit={addSheet}>
+        <form className="as-stack" onSubmit={addSheet}>
           <Input label="Sheet name" value={newSheet} onChange={(e) => setNewSheet(e.target.value)} error={sheetError} autoComplete="off" />
           <Button type="submit" disabled={newSheet.trim() === ""}>Add sheet</Button>
         </form>
