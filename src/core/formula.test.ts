@@ -132,7 +132,15 @@ describe("parse", () => {
     expect(() => parse(`1${"+1".repeat(500)}`, "S")).not.toThrow();
   });
 
-  test("nesting just under the limit parses", () => {
-    expect(() => parse(`${"(".repeat(30)}1${")".repeat(30)}`, "S")).not.toThrow();
+  test("the limits sit at 99/100 nested parens and 1000/1001 chained operators", () => {
+    expect(() => parse(`${"(".repeat(99)}1${")".repeat(99)}`, "S")).not.toThrow();
+    expect(() => parse(`${"(".repeat(100)}1${")".repeat(100)}`, "S")).toThrow(DepthError);
+    expect(() => parse(`1${"+1".repeat(1000)}`, "S")).not.toThrow();
+    expect(() => parse(`1${"+1".repeat(1001)}`, "S")).toThrow(DepthError);
+  });
+
+  test("a colon in a quoted sheet name does not make a single cell a range", () => {
+    expect(parse("'a:b'!A1", "S")).toMatchObject({ sheet: "a:b", isRange: false });
+    expect(parse("'a:b'!A1:B2", "S")).toMatchObject({ sheet: "a:b", isRange: true });
   });
 });

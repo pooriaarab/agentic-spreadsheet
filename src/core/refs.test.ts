@@ -111,6 +111,11 @@ describe("mapRefs", () => {
     expect(seen).toEqual(["Home", "Other"]);
   });
 
+  test("reads lower-case refs; a range end glued to a word falls back to the first cell", () => {
+    expect(mapRefs("=a1+b2:c3", "H", upper)).toBe("=<a1>+<b2:c3>");
+    expect(mapRefs("=A1:B2x", "H", upper)).toBe("=<A1>:B2x");
+  });
+
   test("a formula with no refs comes back the same", () => {
     expect(mapRefs("=1+2", "H", () => "never")).toBe("=1+2");
     expect(mapRefs("", "H", () => "never")).toBe("");
