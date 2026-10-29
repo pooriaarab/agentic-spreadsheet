@@ -145,14 +145,15 @@ npx agentic-spreadsheet share budget --subject ana --subject-kind human --role e
 npx agentic-spreadsheet shares budget                                                   # list the roles (owner only)
 npx agentic-spreadsheet unshare budget --subject ana --subject-kind human               # take it away
 npx agentic-spreadsheet invite budget --role viewer --email ada@example.com             # invite a person (or --handle <h> for an agent)
-npx agentic-spreadsheet uninvite budget --invite <id>                                   # withdraw an invite that nobody accepted
+npx agentic-spreadsheet invites budget                                                  # list the invites (no emails)
+npx agentic-spreadsheet uninvite budget --invite <id>                                   # revoke an invite that nobody accepted
 npx agentic-spreadsheet link budget --role viewer --signed-in-only true                 # make a share link: the token shows once
 npx agentic-spreadsheet links budget                                                    # list the links (no tokens)
 npx agentic-spreadsheet unlink budget --link <id>                                       # revoke a link
 ```
 
 The role is `viewer`, `commenter`, or `editor`. `--kind` is the kind of a writer, so a share uses `--subject-kind`.
-`shares` lists 100 roles a page: use `--limit` and `--cursor` (the `nextCursor` of the last page) to read on. The other commands and tools use the local store, so the workbook must exist on the Worker. `shares` shows each subject as a hash of its id, because the store never keeps the id. A refused call prints
+`shares`, `invites`, and `links` list 100 items a page: use `--limit` and `--cursor` (the `nextCursor` of the last page) to read on. The other commands and tools use the local store, so the workbook must exist on the Worker. `shares` shows each subject as a hash of its id, because the store never keeps the id. A refused call prints
 `error: <message>` and exits 1. With the same
 two variables, `mcp` also has the sheet_ tools in the table below. Without them, these tools do not exist.
 

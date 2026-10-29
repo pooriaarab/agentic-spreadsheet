@@ -11,6 +11,12 @@ export class NoShare extends Error {
   }
 }
 
+export class InviteTaken extends Error {
+  constructor(invite: string) {
+    super(`invite "${invite}" is accepted: revoke its role with unshare`);
+  }
+}
+
 export class NoInvite extends Error {
   constructor(invite: string) {
     super(`no invite "${invite}" on this workbook`);
@@ -96,13 +102,14 @@ export function createAccess(store: Store) {
       // An invite with an id or a role that is not valid is not honored, so it is not listed.
       // A time in the store that is not a number is listed as 0: an expiry of 0 is expired, and an accept time of 0 is accepted.
       // The library list leaves such a time out, which would read as "never expires" or "still open".
-      const time = (value: unknown) => (value == null ? {} : { v: typeof value === "number" && Number.isFinite(value) ? value : 0 });
-      const invites = [];
-      for (const i of page.invites) {
-        if (typeof i.id !== "string" || !(SHARE_ROLES as readonly unknown[]).includes(i.role)) continue;
-        const stored = (await store.get("invites", i.id)) ?? {};
-        const [expiresAt, acceptedAt] = [time(stored.expiresAt).v, time(stored.acceptedAt).v];
-        invites.push({
+      // A stored null accept time counts as accepted too, as in the library.
+      const time = (value: unknown, present: boolean) => (!present ? undefined : typeof value === "number" && Number.isFinite(value) ? value : 0);
+      const shown = page.invites.filter((i) => typeof i.id === "string" && (SHARE_ROLES as readonly unknown[]).includes(i.role));
+      const stored = await Promise.all(shown.map(async (i) => (await store.get("invites", i.id)) ?? {}));
+      const invites = shown.map((i, n) => {
+        const doc = stored[n];
+        const [expiresAt, acceptedAt] = [time(doc.expiresAt, doc.expiresAt != null), time(doc.acceptedAt, "acceptedAt" in doc && doc.acceptedAt !== undefined)];
+        return {
           id: i.id,
           role: i.role as ShareRole,
           for: i.for,
@@ -110,8 +117,8 @@ export function createAccess(store: Store) {
           ...(expiresAt === undefined ? {} : { expiresAt }),
           ...(acceptedAt === undefined ? {} : { acceptedAt }),
           ...(i.revokedAt === undefined ? {} : { revokedAt: i.revokedAt }),
-        });
-      }
+        };
+      });
       return { invites, ...(page.nextCursor === undefined ? {} : { nextCursor: page.nextCursor }) };
     },
     // Invites a person by email or an agent by handle. The role is not owner. Only an owner may.
@@ -154,7 +161,10 @@ export function createAccess(store: Store) {
       const resource = await resourceId(book);
       const invite = /^[\w-]{1,128}$/.test(inviteId) ? await store.get("invites", inviteId) : null;
       if (invite?.resourceId !== resource) throw new NoInvite(inviteId);
-      await sharing.revokeInvite(await context(who), inviteId);
+      await sharing.revokeInvite(await context(who), inviteId).catch((error: unknown) => {
+        if (error instanceof Error && error.message === "invite already accepted") throw new InviteTaken(inviteId);
+        throw error;
+      });
     },
     async unshare(who: Principal, book: string, from: { kind: SubjectKind; id: string }): Promise<void> {
       const [resource, target] = [await resourceId(book), await subject(from.kind, from.id)];

@@ -94,9 +94,11 @@ describe("invites and share links", () => {
     const doc = (await store.get("invites", invite.json.id))!;
     await store.put("invites", invite.json.id, { ...doc, expiresAt: "soon" });
     expect((await call(a, "ana", "GET", "/b/invites")).json.invites).toMatchObject([{ id: invite.json.id, expiresAt: 0 }]);
+    await store.put("invites", invite.json.id, { ...doc, acceptedAt: null });
+    expect((await call(a, "ana", "GET", "/b/invites")).json.invites).toMatchObject([{ id: invite.json.id, acceptedAt: 0 }]);
     await store.put("invites", invite.json.id, { ...doc, acceptedAt: "yes" });
     expect((await call(a, "ana", "GET", "/b/invites")).json.invites).toMatchObject([{ id: invite.json.id, acceptedAt: 0 }]);
-    expect((await call(a, "ana", "DELETE", `/b/invites/${invite.json.id}`)).status).toBe(400);
+    expect((await call(a, "ana", "DELETE", `/b/invites/${invite.json.id}`)).status).toBe(409);
   });
 
   test("a stored link with a bad expiry lists as expired, not as never expiring", async () => {
