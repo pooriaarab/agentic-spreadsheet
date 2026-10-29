@@ -1,5 +1,6 @@
 import * as Y from "yjs";
-import { colIndex, formatCell, MAX_COL, MAX_ROW, parseCell, parseRange, type RangePos } from "./a1.js";
+import { colIndex, colLetters, formatCell, MAX_COL, MAX_ROW, parseCell, parseRange, type RangePos } from "./a1.js";
+import { rewriteRefs, sameSheet, shiftSpan, type RefEdit } from "./refs.js";
 
 export type PrincipalKind = "human" | "agent_of_human" | "agent_of_agent" | "agent" | "user_token";
 
@@ -62,6 +63,7 @@ export class SheetError extends Error {
 
 const MAX_RANGE_CELLS = 1_000_000;
 const MAX_FORMAT_CELLS = 100_000;
+const MAX_STRUCTURE_COUNT = 10_000;
 const MAX_TEXT = 32_767;
 const MAX_FORMULA = 8_192;
 const BAD_SHEET_NAME = /[[\]:*?/\\!']/;
@@ -73,18 +75,54 @@ type YSheet = Y.Map<unknown>;
 // content editor), `A1:fby` (the last format editor), and `A1:fmt.<field>`. Flat keys let two writers who touch one new cell merge.
 type Cells = Y.Map<unknown>;
 type Stamp = Principal & { at: string };
+type Axis = "row" | "col";
 
-function sameSheet(a: string, b: string): boolean {
-  return a.toLowerCase() === b.toLowerCase();
+// A structure edit (insert, delete, rename) moves cells and rewrites formulas, so it cannot
+// merge with another one made at the same time. Each edit adds a log entry that names the
+// entry before it. Two edits made at once name the same parent, and the merge shows the fork.
+interface LogEntry {
+  id: string;
+  parent: string | null;
+  accepted?: true;
 }
 
 export class Workbook {
   readonly doc: Y.Doc;
   private readonly sheets: Y.Array<YSheet>;
+  private readonly log: Y.Array<LogEntry>;
 
   constructor(doc: Y.Doc = new Y.Doc()) {
     this.doc = doc;
     this.sheets = doc.getArray("sheets");
+    this.log = doc.getArray("structure");
+  }
+
+  // True when two clients changed rows, columns, or sheet names at the same time. Their edits
+  // cannot both hold, so the workbook refuses writes until someone checks it and accepts it.
+  structureConflict(): boolean {
+    const entries = this.log.toArray();
+    let from = 0;
+    entries.forEach((entry, i) => entry.accepted && (from = i + 1));
+    for (let i = from; i < entries.length; i += 1) {
+      if (entries[i].parent !== (i === 0 ? null : entries[i - 1].id)) return true;
+    }
+    return false;
+  }
+
+  acceptStructureMerge(): void {
+    this.record(true);
+  }
+
+  private record(accepted?: true): void {
+    const last = this.log.get(this.log.length - 1);
+    const id = `${this.doc.clientID.toString(36)}.${Date.now().toString(36)}.${Math.random().toString(36).slice(2)}`;
+    this.log.push([{ id, parent: last?.id ?? null, ...(accepted && { accepted }) }]);
+  }
+
+  private writable(): void {
+    if (this.structureConflict()) {
+      throw new SheetError("two clients changed rows, columns, or sheet names at the same time; check the sheet, then accept the merge");
+    }
   }
 
   static fromState(state: Uint8Array): Workbook {
@@ -102,6 +140,7 @@ export class Workbook {
   }
 
   addSheet(name: string, index: number = this.sheets.length): void {
+    this.writable();
     this.checkName(name);
     const sheet: YSheet = new Y.Map();
     sheet.set("name", name);
@@ -109,6 +148,30 @@ export class Workbook {
     sheet.set("widths", new Y.Map());
     sheet.set("frozenRows", 0);
     this.sheets.insert(Math.max(0, Math.min(index, this.sheets.length)), [sheet]);
+  }
+
+  renameSheet(name: string, to: string): void {
+    this.writable();
+    const sheet = this.find(name);
+    if (!sameSheet(name, to)) this.checkName(to);
+    this.doc.transact(() => {
+      this.rewriteAll((ref) =>
+        ref.sheet !== null && sameSheet(ref.target, name) ? { range: ref.range, sheet: to } : { range: ref.range },
+      );
+      sheet.set("name", to);
+      this.record();
+    });
+  }
+
+  deleteSheet(name: string): void {
+    this.writable();
+    const sheet = this.find(name);
+    if (this.sheets.length === 1) throw new SheetError("cannot delete the last sheet");
+    this.doc.transact(() => {
+      this.rewriteAll((ref) => (sameSheet(ref.target, name) ? null : { range: ref.range }));
+      this.sheets.delete(this.sheets.toArray().indexOf(sheet), 1);
+      this.record();
+    });
   }
 
   sheetInfo(name: string): SheetInfo {
@@ -125,11 +188,13 @@ export class Workbook {
   }
 
   setFrozenRows(name: string, rows: number): void {
+    this.writable();
     if (!Number.isInteger(rows) || rows < 0 || rows > MAX_ROW) throw new SheetError(`invalid frozen rows ${rows}`);
     this.find(name).set("frozenRows", rows);
   }
 
   setColumnWidth(name: string, column: string, width: number): void {
+    this.writable();
     const letters = column.toUpperCase();
     if (!/^[A-Z]{1,3}$/.test(letters) || colIndex(letters) > MAX_COL) throw new SheetError(`invalid column "${column}"`);
     if (typeof width !== "number" || !Number.isFinite(width) || width <= 0) throw new SheetError(`invalid column width ${width}`);
@@ -148,6 +213,7 @@ export class Workbook {
 
   // Write a grid of values, or formulas, with its top-left corner at `anchor`.
   writeRange(name: string, anchor: string, rows: CellInput[][], by: Principal): void {
+    this.writable();
     const cells = this.cells(this.find(name));
     const start = parseCell(anchor);
     let width = 0;
@@ -167,6 +233,7 @@ export class Workbook {
   }
 
   setFormat(name: string, range: string, patch: CellFormatPatch, by: Principal): void {
+    this.writable();
     const cells = this.cells(this.find(name));
     const span = this.span(range, MAX_FORMAT_CELLS);
     checkPatch(patch);
@@ -183,6 +250,94 @@ export class Workbook {
         }
       }
     });
+  }
+
+  // Structure. `at` is the 1-based row or column. Refs to moved cells follow them. Refs to
+  // deleted cells become #REF!. An insert that would push a cell or a width off the grid is refused.
+
+  insertRows(name: string, at: number, count = 1): void {
+    this.restructure(name, "row", "insert", at, count);
+  }
+
+  deleteRows(name: string, at: number, count = 1): void {
+    this.restructure(name, "row", "delete", at, count);
+  }
+
+  insertCols(name: string, at: number, count = 1): void {
+    this.restructure(name, "col", "insert", at, count);
+  }
+
+  deleteCols(name: string, at: number, count = 1): void {
+    this.restructure(name, "col", "delete", at, count);
+  }
+
+  private restructure(name: string, axis: Axis, op: "insert" | "delete", at: number, count: number): void {
+    this.writable();
+    const sheet = this.find(name);
+    const max = axis === "row" ? MAX_ROW : MAX_COL;
+    if (!Number.isInteger(at) || !Number.isInteger(count) || at < 1 || at > max || count < 1 || count > MAX_STRUCTURE_COUNT) {
+      throw new SheetError(`invalid ${axis} position ${at} or count ${count}`);
+    }
+    const cells = this.cells(sheet);
+    const widths = sheet.get("widths") as Y.Map<number>;
+    if (op === "insert") {
+      let last = 0;
+      for (const addr of usedAddresses(cells)) last = Math.max(last, parseCell(addr)[axis]);
+      if (axis === "col") for (const letters of widths.keys()) last = Math.max(last, colIndex(letters));
+      if (last >= at && last + count > max) throw new SheetError(`insert would push cells past the edge of the grid`);
+    }
+    const shift = (lo: number, hi: number): [number, number] | null => {
+      const moved = shiftSpan(lo, hi, op, at, count);
+      return moved === null || moved[0] > max ? null : [moved[0], Math.min(moved[1], max)];
+    };
+    this.doc.transact(() => {
+      this.rewriteAll((ref) => {
+        if (!sameSheet(ref.target, name)) return { range: ref.range };
+        const { c1, r1, c2, r2 } = ref.range;
+        const moved = axis === "row" ? shift(r1, r2) : shift(c1, c2);
+        if (moved === null) return null;
+        return { range: axis === "row" ? { c1, c2, r1: moved[0], r2: moved[1] } : { r1, r2, c1: moved[0], c2: moved[1] } };
+      });
+      const moves: { from: string; to: string | null; value: unknown }[] = [];
+      for (const [from, value] of cells.entries()) {
+        const cut = from.indexOf(":");
+        const pos = parseCell(from.slice(0, cut));
+        const moved = shift(pos[axis], pos[axis]);
+        if (moved !== null && moved[0] === pos[axis]) continue;
+        const to = moved === null ? null : `${formatCell({ ...pos, [axis]: moved[0] })}${from.slice(cut)}`;
+        moves.push({ from, to, value });
+      }
+      for (const move of moves) cells.delete(move.from);
+      for (const move of moves) if (move.to !== null) cells.set(move.to, move.value);
+      if (axis === "col") this.moveWidths(widths, shift);
+      else {
+        const frozen = sheet.get("frozenRows") as number;
+        if (op === "insert") sheet.set("frozenRows", at <= frozen ? Math.min(frozen + count, MAX_ROW) : frozen);
+        else sheet.set("frozenRows", frozen - Math.max(0, Math.min(at + count - 1, frozen) - at + 1));
+      }
+      this.record();
+    });
+  }
+
+  private moveWidths(widths: Y.Map<number>, shift: (lo: number, hi: number) => [number, number] | null): void {
+    const entries = [...widths.entries()];
+    for (const [letters] of entries) widths.delete(letters);
+    for (const [letters, width] of entries) {
+      const moved = shift(colIndex(letters), colIndex(letters));
+      if (moved !== null) widths.set(colLetters(moved[0]), width);
+    }
+  }
+
+  private rewriteAll(edit: RefEdit): void {
+    for (const sheet of this.sheets) {
+      const home = sheet.get("name") as string;
+      const cells = this.cells(sheet);
+      for (const [key, formula] of [...cells.entries()]) {
+        if (!key.endsWith(":c") || !isFormula(formula)) continue;
+        const next = rewriteRefs(formula, home, edit);
+        if (next !== formula) cells.set(key, next);
+      }
+    }
   }
 
   private find(name: string): YSheet {
