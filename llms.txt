@@ -4,12 +4,10 @@ Spreadsheets with formulas that people and agents edit together.
 
 Keywords: spreadsheet,sheets,formulas,grid,collaboration,agents,mcp,cli,csv,xlsx.
 
-- SDK: import { summarizeText, dispatchText } from "agentic-spreadsheet".
-- CLI: agentic-spreadsheet summary --text "...".
-- MCP: run agentic-spreadsheet mcp, then call summarize_text.
+- SDK: import { Workbook } from "agentic-spreadsheet".
+- CLI and MCP: planned.
 
 ## Docs
 
 - README: https://github.com/pooriaarab/agentic-spreadsheet
-- Core contract: https://github.com/pooriaarab/agentic-spreadsheet/blob/main/docs/agentic-core.md
 - License: MIT

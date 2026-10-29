@@ -41,8 +41,7 @@
     }
   },
   "bin": {
-    "agentic-spreadsheet": "./dist/cli.js",
-    "agentic-spreadsheet-mcp": "./dist/mcp-bin.js"
+    "agentic-spreadsheet": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsup",
@@ -52,8 +51,7 @@
     "ci:local": "npm run build && npm run typecheck && npm test"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.12.0",
-    "zod": "^3.25.0"
+    "yjs": "^13.6.0"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

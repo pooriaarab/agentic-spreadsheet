@@ -7,34 +7,47 @@
 
 Spreadsheets with formulas that people and agents edit together.
 
-> Status: scaffold. This repository holds the starter code only. It is not on npm
-> yet, and none of the features below work yet.
+> Status: early. Only the workbook model works today. It is not on npm yet.
+> The formula engine, CLI, MCP server, and HTTP API are planned.
 
-## Planned features
-
-- A fast grid with many sheets per workbook.
-- A formula engine with the common spreadsheet functions.
-- Real-time editing with live cursors.
-- Agent tools: read ranges, write ranges, and add formulas.
-- Import and export CSV and XLSX.
-- Share by invite or link, with roles.
-
-## Surfaces
-
-One package gives you each way in:
-
-- **Library and SDK**: `import { ... } from "agentic-spreadsheet"`.
-- **CLI**: `npx agentic-spreadsheet --help`.
-- **MCP server**: `npx agentic-spreadsheet mcp`, for Claude Code and other MCP clients.
-- **HTTP API**: a Cloudflare Worker you deploy to your own account.
-- **Web UI**: a small app served by the same Worker.
-
-## Develop
+## Install
 
 ```sh
-npm ci
-npm run build && npm run typecheck && npm test
+npm install agentic-spreadsheet
 ```
+
+## Quick start
+
+```ts
+import { Workbook } from "agentic-spreadsheet";
+
+const me = { id: "user-1", kind: "human" } as const;
+const wb = new Workbook();
+wb.addSheet("Sheet1");
+wb.writeRange("Sheet1", "A1", [[1], [2], ["=SUM(A1:A2)"]], me);
+console.log(wb.readRange("Sheet1", "A1:A4"));
+```
+
+## Features
+
+- A workbook is one Yjs document. Two copies merge. Content, each format field, and the editor stamp
+  of a cell are separate keys, so two writers on one new cell keep both edits.
+  If two writers set the same field, the later write wins.
+- Many sheets in a set order.
+- Sparse cells keyed by A1 coordinates. Each cell holds a value or a formula, plus a format.
+  Text is at most 32,767 characters. A formula is at most 8,192.
+- Column widths and frozen rows.
+- Read a range. Write a range of values or formulas.
+- Every cell keeps the principal that last edited it. The kind is one of
+  `human`, `agent_of_human`, `agent_of_agent`, `agent`, or `user_token`.
+  Only `human` reads as human-made. All other kinds read as machine-made.
+
+## Limits
+
+- Formulas are stored as text. Nothing evaluates them yet.
+- There is no storage, CLI, MCP server, or HTTP API yet.
+- Two clients that add a sheet with the same name while offline both succeed.
+  The merged workbook then holds two sheets with one name.
 
 ## License
 

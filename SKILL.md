@@ -10,26 +10,11 @@ Spreadsheets with formulas that people and agents edit together.
 ## Use the SDK
 
 ```js
-import { summarizeText, dispatchText } from "agentic-spreadsheet";
+import { Workbook } from "agentic-spreadsheet";
 
-summarizeText("some text");
-await dispatchText("some text", { dryRun: true });
+const agent = { id: "agent-1", kind: "agent_of_human" };
+const wb = new Workbook();
+wb.addSheet("Sheet1");
+wb.writeRange("Sheet1", "A1", [[1, 2, "=A1+B1"]], agent);
+wb.readRange("Sheet1", "A1:C1");
 ```
-
-## Use the CLI
-
-```sh
-agentic-spreadsheet summary --text "some text"
-agentic-spreadsheet dispatch --text "some text" --dry-run
-```
-
-## Use the MCP server
-
-Start the server with `agentic-spreadsheet mcp`. Call `summarize_text`
-for stats, `dispatch_text` for routes, `get_cost_report` for costs.
-
-## Rules
-
-- Preview each route with dry run first.
-- Report guard denials and adapter errors as failures.
-- Read the cost report at the end.

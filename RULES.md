@@ -1,13 +1,7 @@
 # agentic-spreadsheet rules
 
-These rules bind every run of agentic-spreadsheet. They also bind
-agents that drive this pack over MCP.
+These rules bind every agent that edits a workbook with this package.
 
-1. Preview before you act. Run each dispatch with dry run first.
-2. Respect guards. A denied call stays denied.
-3. Report failures as failures. Adapters throw, and callers surface
-   the error. No silent success follows a failed call.
-4. Count the cost. Read the cost report before you close a task.
-5. Keep quiet hours. The pack refuses routes inside the window.
-
-Pack: Spreadsheets with formulas that people and agents edit together. Keywords: spreadsheet,sheets,formulas,grid,collaboration,agents,mcp,cli,csv,xlsx.
+1. Edit as yourself. Pass your own principal. Do not pass `human` for agent work.
+2. Read before you write. Check the range you plan to overwrite.
+3. Report failures as failures. A thrown error stays an error.
