@@ -238,18 +238,26 @@ If the Worker fails after it saves a new workbook and before it records the owne
 `createApp` from `agentic-spreadsheet/worker` builds the Hono app that serves the API above. It takes:
 
 - `store` and `blobs`: the `Store` and `Blobs` ports of `agentic-identity`. Use `createMemoryStore()` and `createMemoryBlobs()` for tests. A Cloudflare Worker uses the D1 and R2 adapters of `agentic-identity/cloudflare`.
-- `authenticate`: a function that reads a request and returns the caller, or `null`. A `null` answers 401. `fromAuth(auth)` from the same entry adapts an `Auth` port of `agentic-identity`.
+- `authenticate`: a function that reads a request and returns the caller, or `null`. A `null` answers 401 on the `/api/v1/sheets` routes. `GET /health` needs no key. `fromAuth(auth)` from the same entry adapts an `Auth` port of `agentic-identity`.
 - `pack` (optional): the name that `GET /health` returns. The default is `agentic-spreadsheet`.
 
 ```ts
+import type { Auth } from "agentic-identity";
 import { createApp, fromAuth } from "agentic-spreadsheet/worker";
 import { createMemoryBlobs, createMemoryStore } from "agentic-spreadsheet";
 
-const app = createApp({ store: createMemoryStore(), blobs: createMemoryBlobs(), authenticate: fromAuth(auth), pack: "my-app" }); // auth: your Auth port of agentic-identity
+declare const auth: Auth; // your Auth port of agentic-identity
+
+const app = createApp({
+  store: createMemoryStore(),
+  blobs: createMemoryBlobs(),
+  authenticate: fromAuth(auth),
+  pack: "my-app",
+});
 export default app; // a Hono app: app.fetch(request) answers the routes above
 ```
 
-The app runs the same operations as the table above, under `/api/v1/sheets`. It limits each request body to 5 MB and sets `Cache-Control: no-store`. It reads no key or setting of its own, so the host decides who signs in. The default export of `agentic-spreadsheet/worker` builds this app from the `DB` and `BLOBS` bindings, `SHEETS_REGION`, and `SHEETS_API_KEYS`.
+The app runs the same operations as the table above, under `/api/v1/sheets`. It limits each request body to 5 MB and sets `Cache-Control: no-store`. It reads no key or setting of its own, so the host decides who signs in. The default export of `agentic-spreadsheet/worker` builds this app from the `DB` and `BLOBS` bindings and these settings: `SHEETS_REGION`, `SHEETS_UNSAFE_REGION`, `SHEETS_API_KEYS`, and `SHEETS_UNSAFE_TRUST_HEADERS`. `PACK_NAME` sets `pack`.
 
 ## Mount the sheet in your page
 
