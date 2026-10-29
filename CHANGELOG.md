@@ -5,11 +5,40 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-29
+
 ### Added
 
 - `agentic-spreadsheet/client`: a typed client for the Worker HTTP API. `createClient({ baseUrl, token, fetch? })`
   has one method for each route. A failed call throws `SheetsApiError` with the HTTP `status` and a `code`.
   It uses only `fetch`, takes an `AbortSignal`, and never retries.
+
+### Breaking changes
+
+- A workbook with a cell key in the old A1 form on a sheet that has an id now refuses reads and writes, with an
+  error that says how to recover. Before, the workbook loaded and the cell read as empty. Restore the workbook
+  from a copy that has no such key.
+- An old formula that holds U+0001 or U+0002 is refused when it is converted, because the stored form reads
+  those characters as ref markers.
+
+### Changed
+
+- A sheet that comes without an id after a conversion converts with a tag of its own name. It is a clash only
+  when two copies convert that same sheet.
+- `DELETE /api/v1/sheets/:book` deletes the blob, then erases the grants, then deletes the document. A failed
+  step can run again with the owner's grant in place, and the name stays taken until the end.
+- A store conflict during that delete answers 409. A malformed blob field in a stored record is a data error,
+  and the Worker answers 500.
+
+### Fixed
+
+- A failed blob delete in `DELETE /api/v1/sheets/:book` is no longer hidden. The caller gets a server error, with
+  no backend text, and the same call can run again.
+- A save that lands during a delete makes the call start again. The grants step runs once.
+
+### Tests
+
+- Every read-only command is tested to save nothing, by comparing the stored bytes and the file list.
 
 ## [0.3.0] - 2026-10-29
 
