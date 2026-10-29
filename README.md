@@ -63,8 +63,8 @@ Methods: `list`, `create`, `read`, `write`, `setFormula`, `insertRows`, `exportC
 
 A failed call throws `SheetsApiError` with the HTTP `status` and a `code`: `bad_request` (400),
 `unauthorized` (401), `forbidden` (403), `not_found` (404), `conflict` (409), `too_large` (413), or
-`server_error` (5xx). Any other status, such as a 429 from a proxy, is `unknown`. The API sends no code of its own, so the client names the status. A network failure or
-an abort throws the error that `fetch` throws. The client never retries. A write that fails may have landed:
+`server_error` (5xx). Any other status, such as a 429 from a proxy, is `unknown`. The API sends no code of its own, so the client names the status. A network failure, an abort, or
+a 2xx answer that is not JSON (for example from a wrong `baseUrl`) throws the error that `fetch` or `json()` throws. The client never retries. A write that fails may have landed:
 read the book before you send it again.
 
 ## CLI and MCP server

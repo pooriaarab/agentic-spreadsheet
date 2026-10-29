@@ -4,8 +4,11 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, test } from "vitest";
+import { afterAll, beforeAll, describe, expect, expectTypeOf, test } from "vitest";
+import * as client from "./client.js";
 import { createClient, SheetsApiError } from "./client.js";
+import type { Value as EngineValue } from "./core/engine.js";
+import type { Author, PrincipalKind } from "./core/workbook.js";
 
 // These tests call the real Worker, started with `wrangler dev`, through the client.
 // Failure modes, listed before the code:
@@ -74,6 +77,13 @@ const failure = async (call: Promise<unknown>) => {
   expect(error).toBeInstanceOf(SheetsApiError);
   return error as SheetsApiError;
 };
+
+// The client copies these types so it has no imports. Typecheck fails when a copy drifts.
+test("the client types match the core types", () => {
+  expectTypeOf<client.Value>().toEqualTypeOf<EngineValue>();
+  expectTypeOf<client.PrincipalKind>().toEqualTypeOf<PrincipalKind>();
+  expectTypeOf<client.CellAuthor>().toEqualTypeOf<Author>();
+});
 
 describe("client against the Worker", () => {
   test("health", async () => {
