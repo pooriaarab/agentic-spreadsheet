@@ -5,6 +5,33 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-29
+
+### Added
+
+- A mountable UI. `agentic-spreadsheet/ui` exports `mount(element, { client, docId, principal, readOnly })`. It renders
+  a workbook into a host element and returns `update` and `unmount`. Import the styles from `agentic-spreadsheet/ui.css`.
+  The principal needs a known kind. `readOnly` turns off every edit. The grid classes are prefixed `as-`, so the host
+  page keeps its own styles.
+
+### Changed
+
+- `agentic-design` and `agentic-realtime` are runtime dependencies now, so `agentic-spreadsheet/ui` loads without a dev
+  install. `react` and `react-dom` (19.x) are optional peer dependencies.
+- The web UI renders the workbook through the same component that `mount` uses.
+
+### Documentation
+
+- The README and `llms.txt` name the root exports they left out: the A1 and CSV helpers, the store adapters, `OPS`,
+  `ctxFromEnv`, `isMachineMade`, `PRINCIPAL_KINDS`, `VERSION`, `SheetError`, the base64 helpers, and the `MAX_` limits.
+  They also state the grid size and the sheet-name limit.
+
+### Tests
+
+- The UI Playwright spec (`e2e/ui.spec.ts`) runs in CI, in a `ui` job. Before, it ran only on a developer machine.
+- The test timeout is 30 s for the whole suite. CLI and MCP tests start several Node processes, which hit the 5 s
+  default on shared runners.
+
 ## [0.6.0] - 2026-10-29
 
 ### Breaking changes
