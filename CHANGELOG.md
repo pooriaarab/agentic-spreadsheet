@@ -9,7 +9,7 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
-- The `agentic-design` dependency is now `^0.8.0`. It was `^0.5.0`. That range did not accept the newest `agentic-design`. So the agentic-* packages could not be installed together. The code needs no change for 0.6.0 to 0.8.0. On a wide screen the UI renders the same. agentic-design 0.7.0 fixes the top bar on a 360px to 390px screen: the page no longer scrolls sideways, the actions wrap, and the product name shortens.
+- The `agentic-design` dependency is now `^0.8.0`. It was `^0.5.0`. That range did not accept the newest `agentic-design`. So the agentic-* packages could not be installed together. The code needs no change for 0.6.0 to 0.8.0. On a wide screen the UI renders the same. agentic-design 0.7.0 fixes the top bar on a 360px to 390px screen. The page no longer scrolls sideways. The actions wrap, and the product name shortens.
 
 ## [0.13.0] - 2026-10-29
 
