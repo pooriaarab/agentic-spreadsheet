@@ -57,7 +57,7 @@ export const SHARE_OPS: ShareOp[] = [
   },
   {
     name: "shares", description: "List the roles on a workbook, through the Worker. Owner only. Subject ids are hashes. Up to 100 a page: pass nextCursor back as cursor.", args: ["book"],
-    shape: { book, limit: z.coerce.number().int().min(1).max(100).optional().describe("Roles a page, 100 at most."), cursor }, readOnly: true,
+    shape: { book, limit: whole(100).describe("Roles a page, 100 at most."), cursor }, readOnly: true,
     run: (a: { book: string; limit?: number; cursor?: string }, client) => client.shares(a),
   },
   {

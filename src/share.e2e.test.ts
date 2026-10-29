@@ -164,6 +164,7 @@ describe("sharing from the CLI", () => {
   test("--limit with no value is an error, not a page of one", async () => {
     await as(KEY_OWNER).create({ book: "lim" });
     expect(cli(KEY_OWNER, "links", "lim", "--limit").code).toBe(1);
+    expect(cli(KEY_OWNER, "shares", "lim", "--limit").code).toBe(1);
     expect(cli(KEY_OWNER, "invites", "lim", "--limit", "0").code).toBe(1);
     expect(cli(KEY_OWNER, "invites", "lim", "--limit", "5").code).toBe(0);
   });
