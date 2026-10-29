@@ -127,8 +127,13 @@ A request body is at most 5 MB. `GET /health` needs no key.
 - Two copies that each convert an old A1-keyed workbook, and then merge, are flagged:
   `conversionClash()` is true and every read and write throws, because each copy made its own order
   for the sheets and the merge keeps one. Load the workbook again from one copy, or better, convert
-  once, save it, and then share it. The CLI and the Worker convert under the store lock and save,
-  so a stored workbook converts once. A copy of one old file converted on two machines meets this case.
+  once, save it, and then share it. The first write of the CLI or the Worker converts a stored
+  workbook and saves it, under the store lock, so a stored workbook converts once. A read converts a
+  copy in memory and saves nothing. A copy of one old file converted on two machines meets this case.
+  An old workbook whose log shows row, column, or sheet-name edits made at the same time and not
+  accepted does not convert: the load throws, because its cells may sit at the wrong address. Accept the
+  merge in the version that saved it, then load it again. `structureConflict()` and
+  `acceptStructureMerge()` are gone from the SDK, because inserts, deletes, and moves now merge.
   A clash that was saved cannot be repaired in place. Restore the workbook from a copy saved before it.
   Old A1-keyed state that a sync provider delivers after the workbook is made is refused with an
   error. Load it with `Workbook.fromState` instead.

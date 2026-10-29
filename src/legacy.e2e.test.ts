@@ -52,7 +52,7 @@ describe("a stored old workbook", () => {
     expect(read.formulas).toEqual([[null, "=SUM(A1:A3)+'Q 3'!B2"], [null, '=$A$1*A2&"A1"'], [null, null]]);
     expect(read.authors[1][0]).toMatchObject({ id: "a1", kind: "agent_of_human", machine: true });
     expect(stored("old").every((sheet) => sheet.id === undefined)).toBe(true);
-    expect(cli("export", "old").out.split("\r\n")[0]).toBe("10,35");
+    expect(cli("export", "old").out.split("\r\n")[0]).toBe("10,35,,");
     expect(cli("insert-rows", "old", "2").code).toBe(0);
     expect(stored("old").every((sheet) => typeof sheet.id === "string")).toBe(true);
     const after = cli("read", "old", "A1:B4").json();
