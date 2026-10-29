@@ -249,7 +249,7 @@ export function SheetView({ client, book, title, changes, presence, connection, 
     const writes = event.key === "Enter" || event.key === "F2" || event.key === "Delete" || event.key === "Backspace" || (event.key.length === 1 && !event.ctrlKey && !event.metaKey);
     if (readOnly && writes && !event.altKey) return;
     const keys: Record<string, Pos> = { ArrowUp: { row: row - 1, col }, ArrowDown: { row: row + 1, col }, ArrowLeft: { row, col: col - 1 }, ArrowRight: { row, col: col + 1 } };
-    if (event.altKey && event.key === "0") {
+    if (event.altKey && (event.code === "Digit0" || event.code === "Numpad0")) {
       // Alt and 0 reset the column and the row of the cell to the default size.
       event.preventDefault();
       resize("cols", col);
