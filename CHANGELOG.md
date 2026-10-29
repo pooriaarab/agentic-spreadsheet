@@ -38,6 +38,7 @@ All notable changes to this project are listed here. The format follows
 - `npm run build` also builds the UI into `dist/ui`. `npm run typecheck` also checks the UI.
 - `ci:local` also runs the Playwright end-to-end tests against `wrangler dev`, with an axe WCAG 2.2 AA
   check in light and dark. A machine that runs them needs the Playwright browser.
+- New scripts: `npm run dev:ui` starts `wrangler dev`, and `npm run test:e2e` runs the Playwright tests.
 - The package has no new runtime dependencies. `agentic-design`, `agentic-realtime`, `react`, and
   `react-dom` are development dependencies. They are built into `dist/ui`.
 

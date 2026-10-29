@@ -17,6 +17,7 @@ Keywords: spreadsheet,sheets,formulas,grid,collaboration,agents,mcp,cli,csv,xlsx
   typed client, agentic-design, and a presence room from agentic-realtime. See README, "UI".
   To host the UI from the npm package: read dist/ui from node_modules/agentic-spreadsheet/dist/ui, serve it at the
   root of an origin, and answer /api/v1/sheets and /health with the default export of agentic-spreadsheet/worker.
+  Pass an env with SHEETS_API_KEYS, or the Worker answers 500.
   Presence works only from a checkout (src/ui-worker.ts).
 - CLI and MCP: run agentic-spreadsheet --help, or agentic-spreadsheet mcp.
 
