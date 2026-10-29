@@ -22,7 +22,9 @@ All notable changes to this project are listed here. The format follows
 - A new workbook id may not start and end with two underscores, and may not pass 256 characters.
 - A writer that meets other writers gives up after 50 tries with 409 "Try again".
 - Removed exports: `MemoryStore`, `FileStore`, `queryDocs`, `SAFE_NAME`, and the types `Doc`,
-  `QueryOptions`, and `QueryResult`. Use `createMemoryStore`, `createFileStore`, and the `Store` type.
+  `QueryOptions`, and `QueryResult`. Use `createMemoryStore` and `createFileStore`.
+- A custom `Store` must match the `agentic-identity` port. It has `region` in place of `jurisdiction`.
+  A query returns `nextCursor`, not `cursor`. A transaction may run its function again, or throw `StoreConflictError`.
 
 ### Added
 
