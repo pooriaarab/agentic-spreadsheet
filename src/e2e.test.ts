@@ -104,6 +104,21 @@ describe("cli", () => {
   });
 });
 
+describe("mcp flags", () => {
+  // The server would wait on stdin, so a timeout turns a hang into a failure.
+  const mcp = (flag: string) => spawnSync(process.execPath, [CLI, "mcp", flag], { encoding: "utf8", timeout: 10_000, input: "" });
+  test.each(["--help", "-h"])("mcp %s prints usage and exits 0", (flag) => {
+    const r = mcp(flag);
+    expect(r.status).toBe(0);
+    expect(r.stdout).toContain("Usage: agentic-spreadsheet");
+  });
+  test.each(["--version", "-V"])("mcp %s prints the version and exits 0", (flag) => {
+    const r = mcp(flag);
+    expect(r.status).toBe(0);
+    expect(r.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+  });
+});
+
 describe("who is writing", () => {
   test.each([
     [{ SHEET_KIND: undefined }, /--kind/], [{ SHEET_AS: undefined }, /--as/], [{ SHEET_KIND: "root" }, /--kind/], [{ SHEET_KIND: "" }, /--kind/],
