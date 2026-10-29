@@ -71,6 +71,28 @@ A failed call throws `SheetsApiError` with the HTTP `status` and a `code`: `bad_
 a 2xx answer that is not JSON (for example from a wrong `baseUrl`) throws the error that `fetch` or `json()` throws. The client never retries. A write that fails may have landed:
 read the book before you send it again.
 
+### ODS and XLSX
+
+`agentic-spreadsheet/formats` maps a workbook to and from ODS and XLSX, through `agentic-formats`.
+
+```ts
+import { exportFile, importFile, formatOf, MIME } from "agentic-spreadsheet/formats";
+
+const { bytes, warnings } = exportFile("xlsx", book); // MIME.xlsx
+const { names } = importFile("ods", odsBytes, book, { id: "bot", kind: "agent_of_human" });
+```
+
+- `exportFile(format, book)` returns the bytes and the notes of what the format could not hold. A formula cell
+  keeps its formula and its shown value. The used ranges of all the sheets together can hold up to 1,000,000 cells, or the call throws a `SheetError`.
+- `importFile(format, bytes, book, by)` adds the sheets of the file after the sheets that are there. A taken
+  name gets a number, and a name is cut to 31 characters. A file that needs a rename, and has a formula that names a sheet (a
+  `!` in the formula), throws a `SheetError`, because the formula would point at another sheet. A formula that
+  names a sheet that is not in the file binds to the sheet of that name in the workbook, if there is one. Every imported cell has the author `by`. All of the sheets are added, or none. A file over
+  25 MB, over 100 sheets, or over 1,000,000 cells in the grids of its sheets throws a `SheetError`. Bytes that are
+  not a file of that format throw the `FormatError` of `agentic-formats`.
+- `formatOf(fileName)` returns `"ods"`, `"xlsx"`, or `null`. `toFileBook(book)` and `addSheets(book, model, by)`
+  work with the neutral model of `agentic-formats`.
+
 ### Other exports
 
 The root export, `agentic-spreadsheet`, also exports these names.

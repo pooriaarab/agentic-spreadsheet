@@ -25,6 +25,7 @@ export default defineConfig({
     cli: "src/cli.ts",
     worker: "src/worker.ts",
     client: "src/client.ts",
+    formats: "src/formats.ts",
     embed: "ui/embed.tsx",
   },
   format: ["esm"],

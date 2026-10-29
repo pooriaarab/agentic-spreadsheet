@@ -5,6 +5,11 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `agentic-spreadsheet/formats` maps a workbook to and from ODS and XLSX through `agentic-formats`: `exportFile`,
+  `importFile`, `addSheets`, `toFileBook`, `formatOf`, and `MIME`. An import adds all of its sheets or none, and refuses a file that needs a rename and has a formula that names a sheet.
+
 ### Changed
 
 - The presence room takes the key in the `agentic-spreadsheet.bearer.<key>` WebSocket subprotocol entry, next to the
