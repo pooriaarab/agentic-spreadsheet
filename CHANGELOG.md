@@ -5,6 +5,12 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.13.1] - 2026-10-29
+
+### Changed
+
+- Widen the dependency ranges for `agentic-design`, `agentic-identity`, and `agentic-realtime` to accept versions 0.9.0, 0.10.0, and 0.5.0, respectively. This lets the latest packages install together.
+
 ## [0.13.0] - 2026-10-29
 
 ### Added
