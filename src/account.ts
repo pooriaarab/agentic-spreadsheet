@@ -18,6 +18,7 @@ export class SpreadsheetAccountError extends Error {}
 const JOBS = "spreadsheet_account_jobs";
 const ERASED = "(erased)";
 function fail(id?: string): never { throw new SpreadsheetAccountError(`account input or stored workbook records are damaged${id ? `: workbook ${id}` : ""}`); }
+function retry(): never { throw new SpreadsheetAccountError("account scan changed; retry"); }
 const plain = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json;
 async function rows(store: Store, collection: string, where?: Record<string, string>) {
   const out: { id: string; data: Doc }[] = [];
@@ -79,7 +80,12 @@ async function open(data: Doc, deps: SpreadsheetAccountDeps, bookId: string) {
     if (state !== undefined) fail(bookId);
     if (!(data.blob as string).startsWith(`workbooks/${bookId}/`)) fail(bookId);
     const blob = await deps.blobs.get(data.blob as string);
-    if (!blob) fail(bookId);
+    if (!blob) {
+      const now = await deps.store.get("workbooks", bookId);
+      const resource = await deps.store.get("resources", await resourceId(bookId));
+      if (!now || now.blob !== data.blob || resource?.spreadsheetErasing) retry();
+      fail(bookId);
+    }
     state = toBase64(blob.data);
   }
   if (typeof state !== "string") fail(bookId);
@@ -127,7 +133,11 @@ async function plan(subject: Principal, deps: SpreadsheetAccountDeps) {
     if (typeof rid !== "string" || !ROLES.includes(role as never)) fail();
     const resource = await store.get("resources", rid);
     if (resource?.type !== "workbook") continue;
-    if (!names.has(rid)) fail();
+    if (!names.has(rid)) {
+      const current = await store.get("resources", rid);
+      if (!current || current.spreadsheetErasing) retry();
+      fail(rid);
+    }
     if (grant.id !== `${rid}:${kind}:${hash}`) fail();
     grants.push(grant);
   }

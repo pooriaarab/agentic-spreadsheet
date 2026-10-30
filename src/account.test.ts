@@ -1,6 +1,6 @@
 // Failure cases: shared owners lose data; kind collisions erase an agent; hidden cell stamps
 // survive; damaged grants or blobs permit partial success; failed blob cleanup cannot retry.
-import { createMemoryBlobs, createMemoryStore, createSharing } from "agentic-identity";
+import { createMemoryBlobs, createMemoryStore, createSharing, type Doc, type Query } from "agentic-identity";
 import { expect, test } from "vitest";
 import { createAccess, resourceId, subjectId } from "./access.js";
 import { Workbook, type Principal } from "./core/workbook.js";
@@ -214,4 +214,20 @@ test("sole deletion captures a state another erase replaces after planning", asy
   await spreadsheetAccount.eraseAccount(ana, deps);
   expect(await deps.store.get("workbooks", "mine")).toBeNull();
   for (const key of keys) expect(await deps.blobs.get(key)).toBeNull();
+});
+
+test("a deletion after the workbook listing returns a neutral retry error", async () => {
+  const deps = fresh();
+  await make(deps, "mine", ana);
+  await make(deps, "bobs", bob);
+  const query = deps.store.query.bind(deps.store);
+  let injected = false;
+  deps.store.query = async <T extends Doc = Doc>(collection: string, options?: Query) => {
+    const page = await query<T>(collection, options);
+    if (collection === "workbooks" && !injected) { injected = true; await spreadsheetAccount.eraseAccount(ana, deps); }
+    return page;
+  };
+  await expect(spreadsheetAccount.eraseAccount(bob, deps)).rejects.toThrow(/^account scan changed; retry$/);
+  deps.store.query = query;
+  await spreadsheetAccount.eraseAccount(bob, deps);
 });
