@@ -4,7 +4,7 @@ import { createMemoryBlobs, createMemoryStore, createSharing } from "agentic-ide
 import { expect, test } from "vitest";
 import { createAccess, resourceId, subjectId } from "./access.js";
 import { Workbook, type Principal } from "./core/workbook.js";
-import { fromBase64, toBase64 } from "./core/bytes.js";
+import { toBase64 } from "./core/bytes.js";
 import { spreadsheetAccount } from "./account.js";
 
 const ana: Principal = { id: "ana", kind: "human" };
@@ -51,7 +51,7 @@ test("deletes sole ownership and blobs, keeps co-owners and anonymises all kinds
   expect((await createAccess(deps.store).role(ana, "read", "joint")).allowed).toBe(false);
   await spreadsheetAccount.eraseAccount(bot, deps);
   const saved = await deps.store.get("workbooks", "machine");
-  const bytes = fromBase64(saved!.state as string);
+  const bytes = (await deps.blobs.get(saved!.blob as string))!.data;
   expect(new TextDecoder().decode(bytes)).not.toContain('"ana"');
   const cell = Workbook.fromState(bytes).readRange("Sheet1", "A1:A1")[0]![0]!;
   expect(cell.author).toMatchObject({ id: "(erased)", kind: bot.kind, machine: true });
@@ -90,7 +90,7 @@ test("keeps formulas and format authors when rebuilding a shared workbook", asyn
   wb.writeRange("Sheet1", "C1", [["=A1"]], bob);
   await deps.blobs.put("workbooks/shared/state", wb.encode());
   await spreadsheetAccount.eraseAccount(bot, deps);
-  const after = Workbook.fromState(fromBase64((await deps.store.get("workbooks", "shared"))!.state as string));
+  const after = Workbook.fromState((await deps.blobs.get((await deps.store.get("workbooks", "shared"))!.blob as string))!.data);
   expect(after.readRange("Sheet1", "C1:C1")[0]![0]!.formula).toBe("=A1");
   expect(after.readRange("Sheet1", "B1:B1")[0]![0]!.formatAuthor).toMatchObject({ id: bob.id });
 });
@@ -101,7 +101,7 @@ test("retries old-blob cleanup after a shared state replacement commits", async 
   const remove = deps.blobs.delete.bind(deps.blobs);
   deps.blobs.delete = async () => { throw new Error("offline"); };
   await expect(spreadsheetAccount.eraseAccount(bot, deps)).rejects.toThrow();
-  expect((await deps.store.get("workbooks", "shared"))!.state).toEqual(expect.any(String));
+  expect((await deps.store.get("workbooks", "shared"))!.blob).not.toBe("workbooks/shared/state");
   deps.blobs.delete = remove;
   await spreadsheetAccount.eraseAccount(bot, deps);
   expect(await deps.blobs.get("workbooks/shared/state")).toBeNull();
@@ -141,6 +141,21 @@ test("resumes when sharing cleanup fails after the workbook row goes", async () 
   await expect(spreadsheetAccount.eraseAccount(ana, deps)).rejects.toThrow();
   expect(await deps.store.get("workbooks", "mine")).toBeNull();
   deps.store.transaction = transact;
-  await spreadsheetAccount.eraseAccount(ana, deps);
+  await spreadsheetAccount.eraseAccount(bob, deps);
   expect(await deps.store.get("resources", await resourceId("mine"))).toBeNull();
+});
+
+test("redacts invite addresses and link secrets, and removes only the subject's metadata", async () => {
+  const deps = fresh();
+  await make(deps, "shared", bob, bot);
+  const rid = await resourceId("shared"), hash = await subjectId(bot.id);
+  await deps.store.put("invites", "mine", { resourceId: rid, createdBy: hash, email: "private@example.test", role: "viewer" });
+  await deps.store.put("audit", "mine", { resourceId: rid, principalId: hash, principalKind: bot.kind, rootId: hash, chain: [{ id: hash, kind: "agent" }] });
+  await deps.store.put("links", "kept", { resourceId: rid, tokenHash: "secret", role: "viewer" });
+  const mine = await spreadsheetAccount.exportAccount(bot, deps);
+  expect(mine.invites).toMatchObject([{ id: "mine", for: "email" }]);
+  expect(JSON.stringify(mine)).not.toContain("private@example.test");
+  expect(JSON.stringify(await spreadsheetAccount.exportAccount(bob, deps))).not.toContain("secret");
+  expect(await spreadsheetAccount.eraseAccount(bot, deps)).toMatchObject({ invites: 1, audit: 1 });
+  expect(await deps.store.get("links", "kept")).not.toBeNull();
 });

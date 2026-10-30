@@ -430,7 +430,7 @@ The export has plain JSON collections: `workbooks` (owned workbooks, with their
 full Yjs state as base64), `grants` (the subject's workbook roles), `authored`
 (cell content and format stamps on other workbooks), `invites`, `links`, and
 `audit`. The last three include records on owned workbooks and records the
-subject made. Links have no stored token hash in the export. Workbook states
+subject made. Invites omit emails and handles. Links omit token hashes. Workbook states
 include sheets, formulas, formats, deleted row cells, and stored CRDT history.
 There is no separate version archive or attachment store.
 
@@ -441,8 +441,8 @@ its cell author IDs become `(erased)`. Content and author kinds stay, so agent
 edits keep their machine labels. Changed states are rebuilt with fresh CRDT
 structs to remove replaced history. A second erase counts zero. Counts use the
 export collection names; a run that fails can have already removed some data.
-A durable cleanup journal keeps blob keys until deletion succeeds. Run erase
-again to finish an interrupted call before exporting.
+A durable cleanup journal keeps blob keys until deletion succeeds. Any erase
+resumes pending cleanup for all subjects. Finish interrupted calls before export.
 
 Stop writes and disconnect editing clients before export and erase. Clients
 with old Yjs state must reload after erase. Run this contributor before the
@@ -455,11 +455,11 @@ so they leave only with their sole-owned workbook. Invites to an email cannot
 be matched to a subject ID. Blobs left by a prior failed save have no owner
 index and cannot be discovered through the blob port.
 
-Both calls refuse damaged workbook states, stamps, and subject grants. Erase
+Each call scans workbook blobs one at a time to find authors; its cost grows
+with all stored workbooks. Both calls refuse damaged states, stamps, and subject grants. Erase
 also refuses damaged owner grants, missing parents, folder cycles, and child
 resources. It checks these before new data changes. Backend failures throw;
 they never return a success report.
-
 
 ## Features
 

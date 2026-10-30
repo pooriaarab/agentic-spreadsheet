@@ -15,7 +15,7 @@ export interface SpreadsheetAccount {
 export class SpreadsheetAccountError extends Error {}
 const JOBS = "spreadsheet_account_jobs";
 const ERASED = "(erased)";
-function fail(): never { throw new SpreadsheetAccountError("account input or stored workbook records are damaged"); }
+function fail(id?: string): never { throw new SpreadsheetAccountError(`account input or stored workbook records are damaged${id ? `: workbook ${id}` : ""}`); }
 const plain = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json;
 async function rows(store: Store, collection: string, where?: Record<string, string>) {
   const out: { id: string; data: Doc }[] = [];
@@ -60,24 +60,26 @@ function authored(wb: Workbook, subject: Principal, erase = false): Json[] {
 function compact(wb: Workbook): string {
   const doc = new Y.Doc();
   doc.getArray("sheets").push(wb.doc.getArray<Y.Map<unknown>>("sheets").toArray().map((sheet) => sheet.clone()));
-  return toBase64(Y.encodeStateAsUpdate(doc));
+  const state = toBase64(Y.encodeStateAsUpdate(doc));
+  Workbook.fromState(fromBase64(state)).doc.destroy();
+  return state;
 }
 async function open(data: Doc, deps: SpreadsheetAccountDeps, bookId: string) {
-  if (data.blob !== undefined && (typeof data.blob !== "string" || !data.blob)) fail();
+  if (data.blob !== undefined && (typeof data.blob !== "string" || !data.blob)) fail(bookId);
   let state = data.state;
   if (data.blob !== undefined) {
-    if (state !== undefined) fail();
-    if (!(data.blob as string).startsWith(`workbooks/${bookId}/`)) fail();
+    if (state !== undefined) fail(bookId);
+    if (!(data.blob as string).startsWith(`workbooks/${bookId}/`)) fail(bookId);
     const blob = await deps.blobs.get(data.blob as string);
-    if (!blob) fail();
+    if (!blob) fail(bookId);
     state = toBase64(blob.data);
   }
-  if (typeof state !== "string") fail();
+  if (typeof state !== "string") fail(bookId);
   try {
     const wb = Workbook.fromState(fromBase64(state));
-    if (!wb.sheetNames().length) fail();
+    if (!wb.sheetNames().length || wb.conversionClash()) fail(bookId);
     return { wb, state };
-  } catch { return fail(); }
+  } catch { return fail(bookId); }
 }
 
 async function plan(subject: Principal, deps: SpreadsheetAccountDeps) {
@@ -85,7 +87,6 @@ async function plan(subject: Principal, deps: SpreadsheetAccountDeps) {
   const { store } = deps;
   const hash = await subjectId(subject.id);
   const kind = subject.kind === "human" ? "human" : "agent";
-  const context = { principalId: hash, kind: subject.kind, chain: [{ id: hash, kind: kind as "human" | "agent" }], scopes: ["workbook:admin"] };
   const books = await rows(store, "workbooks");
   const names = new Map(await Promise.all(books.map(async (b) => [await resourceId(b.id), b.id] as const)));
   const grants: { id: string; data: Doc }[] = [];
@@ -130,12 +131,18 @@ async function plan(subject: Principal, deps: SpreadsheetAccountDeps) {
   for (const book of books) {
     const openedBook = await open(book.data, deps, book.id);
     const stamps = authored(openedBook.wb, subject);
-    opened.push({ ...book, ...openedBook, stamps, resource: await resourceId(book.id) });
+    openedBook.wb.doc.destroy();
+    opened.push({ ...book, stamps, resource: await resourceId(book.id) });
   }
   const owned = new Set(grants.filter((g) => g.data.role === "owner").map((g) => g.data.resourceId));
   const metadata: { collection: "invites" | "links" | "audit"; id: string; data: Doc; mine: boolean }[] = [];
   for (const collection of ["invites", "links", "audit"] as const) {
-    for (const row of await rows(store, collection)) {
+    const selected = new Map<string, { id: string; data: Doc }>();
+    const filters: Record<string, string>[] = [...owned].map((rid) => ({ resourceId: rid as string }));
+    if (collection === "invites") filters.push({ createdBy: hash });
+    if (collection === "audit") for (const field of ["principalId", "rootId", "targetId"]) filters.push({ [field]: hash });
+    for (const where of filters) for (const row of await rows(store, collection, where)) selected.set(row.id, row);
+    for (const row of selected.values()) {
       const rid = row.data.resourceId;
       const mentions = collection === "invites" ? row.data.createdBy === hash : collection === "audit" &&
         (row.data.principalId === hash || row.data.targetId === hash || row.data.rootId === hash || (Array.isArray(row.data.chain) && row.data.chain.some((v) => (v as { id?: unknown })?.id === hash)));
@@ -155,22 +162,23 @@ async function plan(subject: Principal, deps: SpreadsheetAccountDeps) {
       if (mine || owned.has(rid)) metadata.push({ collection, ...row, mine });
     }
   }
-  return { grants, sole, opened, context, hash, kind, metadata };
+  return { grants, sole, opened, hash, kind, metadata };
 }
 
 /** Finish durable cleanup before discovering new work. A failed delete never loses its key. */
-async function resume(subject: Principal, deps: SpreadsheetAccountDeps) {
-  const owner = `${subject.kind}:${await subjectId(subject.id)}`;
-  for (const job of await rows(deps.store, JOBS, { owner })) {
-    const { book, blob, resource } = job.data;
-    if (typeof book !== "string" || (blob !== undefined && typeof blob !== "string")) fail();
-    if (blob !== undefined && !(blob as string).startsWith(`workbooks/${book}/`)) fail();
-    if (resource !== undefined && resource !== await resourceId(book)) fail();
-    const hash = await subjectId(subject.id);
-    const kind = subject.kind === "human" ? "human" : "agent";
-    const context = { principalId: hash, kind: subject.kind, chain: [{ id: hash, kind: kind as "human" | "agent" }], scopes: ["workbook:admin"] };
-    if (blob) await deps.blobs.delete(blob as string);
+async function resume(deps: SpreadsheetAccountDeps) {
+  for (const job of await rows(deps.store, JOBS)) {
+    const { book, blob, resource, owner, candidate } = job.data;
+    if (typeof book !== "string" || typeof owner !== "string" || (blob !== undefined && typeof blob !== "string")) fail();
+    const [principalKind, hash] = owner.split(":");
+    if (!PRINCIPAL_KINDS.includes(principalKind as never) || !/^p[0-9a-f]{64}$/.test(hash ?? "")) fail(book);
+    if (blob !== undefined && !blob.startsWith(`workbooks/${book}/`)) fail(book);
+    if (resource !== undefined && resource !== await resourceId(book)) fail(book);
+    // A candidate may have committed before a backend error. Keep it if it is live.
+    if (blob && (!candidate || (await deps.store.get("workbooks", book))?.blob !== blob)) await deps.blobs.delete(blob);
     if (resource !== undefined) {
+      const kind = principalKind === "human" ? "human" : "agent";
+      const context = { principalId: hash!, kind: principalKind as Principal["kind"], chain: [{ id: hash!, kind: kind as "human" | "agent" }], scopes: ["workbook:admin"] };
       await deps.store.delete("workbooks", book);
       if (await deps.store.get("resources", resource as string)) await createSharing(deps.store).deleteResource(context, resource as string);
     }
@@ -181,12 +189,19 @@ async function resume(subject: Principal, deps: SpreadsheetAccountDeps) {
 export const spreadsheetAccount: SpreadsheetAccount = {
   id: "spreadsheet",
   async exportAccount(subject, deps) {
+    check(subject, deps);
+    if ((await rows(deps.store, JOBS)).length) throw new SpreadsheetAccountError("finish the interrupted erase before exporting");
     const p = await plan(subject, deps);
-    if ((await rows(deps.store, JOBS, { owner: `${subject.kind}:${p.hash}` })).length) throw new SpreadsheetAccountError("finish the interrupted erase before exporting");
+    const workbooks: Json[] = [];
     const owned = new Set(p.grants.filter((g) => g.data.role === "owner").map((g) => g.data.resourceId));
+    for (const b of p.opened.filter((b) => owned.has(b.resource))) {
+      const { wb, state } = await open(b.data, deps, b.id);
+      workbooks.push(plain({ id: b.id, state, updatedAt: b.data.updatedAt }));
+      wb.doc.destroy();
+    }
     return {
-      workbooks: p.opened.filter((b) => owned.has(b.resource)).map((b) => plain({ id: b.id, state: b.state, updatedAt: b.data.updatedAt })),
-      invites: p.metadata.filter((r) => r.collection === "invites").map((r) => plain({ id: r.id, ...r.data })),
+      workbooks,
+      invites: p.metadata.filter((r) => r.collection === "invites").map((r) => { const { resourceId, role, acceptedAt } = r.data; return plain({ id: r.id, resourceId, role, acceptedAt, for: r.data.email ? "email" : "handle" }); }),
       links: p.metadata.filter((r) => r.collection === "links").map((r) => { const { tokenHash: _secret, ...data } = r.data; return plain({ id: r.id, ...data }); }),
       audit: p.metadata.filter((r) => r.collection === "audit").map((r) => plain({ id: r.id, ...r.data })),
       grants: p.grants.map((g) => plain({ id: g.id, ...g.data })),
@@ -195,24 +210,32 @@ export const spreadsheetAccount: SpreadsheetAccount = {
   },
   async eraseAccount(subject, deps) {
     check(subject, deps);
-    await resume(subject, deps);
+    await resume(deps);
     const p = await plan(subject, deps);
     const counts = { workbooks: 0, grants: p.grants.length, authored: 0, invites: 0, links: 0, audit: 0 };
     const owner = `${subject.kind}:${p.hash}`;
     for (const b of p.opened) {
       if (p.sole.has(b.id)) {
         await deps.store.put(JOBS, crypto.randomUUID(), { owner, book: b.id, ...(b.data.blob ? { blob: b.data.blob } : {}), resource: await resourceId(b.id) });
-        await resume(subject, deps);
+        await resume(deps);
         counts.workbooks++;
       } else if (b.stamps.length) {
-        authored(b.wb, subject, true);
-        const state = compact(b.wb);
-        // The replacement and old-blob cleanup key commit together. Stop writes while this runs.
+        const { wb } = await open(b.data, deps, b.id);
+        authored(wb, subject, true);
+        const state = compact(wb);
+        wb.doc.destroy();
+        const key = `workbooks/${b.id}/${crypto.randomUUID()}`;
+        const candidate = crypto.randomUUID();
+        await deps.store.put(JOBS, candidate, { owner, book: b.id, blob: key, candidate: true });
+        if (!await deps.blobs.put(key, fromBase64(state), { contentType: "application/octet-stream" })) fail(b.id);
         await deps.store.transaction(async (tx) => {
-          await tx.put("workbooks", b.id, { name: b.id, updatedAt: b.data.updatedAt, state });
+          const now = await tx.get("workbooks", b.id);
+          if (now?.blob !== b.data.blob || now?.state !== b.data.state) throw new SpreadsheetAccountError(`workbook changed: ${b.id}`);
+          await tx.put("workbooks", b.id, { name: b.id, updatedAt: b.data.updatedAt, blob: key });
           if (b.data.blob) await tx.put(JOBS, crypto.randomUUID(), { owner, book: b.id, blob: b.data.blob });
+          await tx.delete(JOBS, candidate);
         });
-        await resume(subject, deps);
+        await resume(deps);
         counts.authored += b.stamps.length;
       }
     }
