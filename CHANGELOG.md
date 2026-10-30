@@ -9,7 +9,7 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
-- Document every package export and check the README against the public API.
+- Document every package export and check the README and llms.txt against the public API.
 
 ## [0.14.0] - 2026-10-30
 

@@ -14,8 +14,8 @@ const sources: Record<string, string> = {
 };
 
 describe("public export documentation", () => {
-  it("names each export under its package path in the README", () => {
-    const readme = readFileSync("README.md", "utf8");
+  it.each(["README.md", "llms.txt"])("names each export under its package path in %s", (doc) => {
+    const content = readFileSync(doc, "utf8");
     const entries = Object.entries(pkg.exports);
     const program = ts.createProgram(Object.values(sources), {
       module: ts.ModuleKind.NodeNext,
@@ -28,7 +28,7 @@ describe("public export documentation", () => {
     for (const [path, target] of entries) {
       const name = path === "." ? pkg.name : pkg.name + path.slice(1);
       const heading = `### \`${name}\``;
-      const section = readme.split(heading)[1]?.split("\n### ")[0]?.split("\n## ")[0];
+      const section = content.split(heading)[1]?.split("\n### ")[0]?.split("\n## ")[0];
       expect(section, `Missing section for ${name}`).toBeDefined();
       if (typeof target === "string") continue; // CSS has no named exports.
       const source = sources[target.types];
