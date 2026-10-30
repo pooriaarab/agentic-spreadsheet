@@ -173,4 +173,14 @@ test("a concurrent erase cannot delete a candidate that later commits", async ()
   };
   await expect(spreadsheetAccount.eraseAccount(bot, deps)).rejects.toThrow(/retry/);
   expect(await deps.blobs.get((await deps.store.get("workbooks", "shared"))!.blob as string)).not.toBeNull();
+  deps.blobs.put = put;
+  await spreadsheetAccount.eraseAccount(bot, deps);
+});
+
+test("a damaged cleanup job cannot delete another owner's workbook", async () => {
+  const deps = fresh();
+  await make(deps, "shared", bob);
+  await deps.store.put("spreadsheet_account_jobs", "bad", { owner: `human:${await subjectId(ana.id)}`, book: "shared", blob: "workbooks/shared/state", resource: await resourceId("shared") });
+  await expect(spreadsheetAccount.eraseAccount(ana, deps)).rejects.toThrow();
+  expect(await deps.blobs.get("workbooks/shared/state")).not.toBeNull();
 });

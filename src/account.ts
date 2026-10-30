@@ -192,6 +192,11 @@ async function resume(deps: SpreadsheetAccountDeps) {
       await tx.put(JOBS, job.id, { ...current, candidate: false });
       return true;
     });
+    if (resource === undefined && !candidate && blob && (await deps.store.get("workbooks", book))?.blob === blob) fail(book);
+    if (resource !== undefined && await deps.store.get("resources", resource as string)) {
+      const kind = principalKind === "human" ? "human" : "agent";
+      if (!(await createSharing(deps.store).can({ principalId: hash!, kind: principalKind as Principal["kind"], chain: [{ id: hash!, kind }], scopes: ["workbook:admin"] }, "admin", resource as string)).allowed) fail(book);
+    }
     if (blob && remove) await deps.blobs.delete(blob);
     if (resource !== undefined) {
       const kind = principalKind === "human" ? "human" : "agent";
