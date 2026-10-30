@@ -5,6 +5,12 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.14.1] - 2026-10-30
+
+### Changed
+
+- Document every package export and check the README against the public API.
+
 ## [0.14.0] - 2026-10-30
 
 ### Added
