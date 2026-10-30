@@ -5,6 +5,12 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.14.0] - 2026-10-30
+
+### Added
+
+- Typed `./account` contributor for account export and erase. It exports owned workbook state and authored cells, preserves shared owners and agent labels, refuses damaged records, and resumes failed blob cleanup.
+
 ## [0.13.1] - 2026-10-29
 
 ### Changed
