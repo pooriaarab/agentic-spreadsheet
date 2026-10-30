@@ -18,7 +18,7 @@ jobs:
         with:
           node-version: "22"
       - run: npm ci
-      - run: npm install --no-save --save-dev agentic-design@0.10.1 agentic-formats@0.4.4 agentic-identity@0.11.0 agentic-realtime@0.6.0
+      - run: npm install --no-save --save-dev agentic-design@latest agentic-formats@latest agentic-identity@latest agentic-realtime@latest
       - run: npm run build
       - run: npm run typecheck
       - run: npm test
@@ -52,7 +52,7 @@ jobs:
         with:
           node-version: "22"
       - run: npm ci
-      - run: npm install --no-save --save-dev agentic-design@0.10.1 agentic-formats@0.4.4 agentic-identity@0.11.0 agentic-realtime@0.6.0
+      - run: npm install --no-save --save-dev agentic-design@latest agentic-formats@latest agentic-identity@latest agentic-realtime@latest
       - run: npm run build
       - uses: actions/cache@v4
         id: playwright-cache
