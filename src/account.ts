@@ -17,7 +17,7 @@ export interface SpreadsheetAccount {
 export class SpreadsheetAccountError extends Error {}
 const JOBS = "spreadsheet_account_jobs";
 const ERASED = "(erased)";
-function fail(id?: string): never { throw new SpreadsheetAccountError(`account input or stored workbook records are damaged${id ? `: workbook ${id}` : ""}`); }
+function fail(id?: string, kind = "workbook"): never { throw new SpreadsheetAccountError(`account input or stored workbook records are damaged${id ? `: ${kind} ${id}` : ""}`); }
 function retry(): never { throw new SpreadsheetAccountError("account scan changed; retry"); }
 const plain = (value: unknown): Json => JSON.parse(JSON.stringify(value)) as Json;
 async function rows(store: Store, collection: string, where?: Record<string, string>) {
@@ -136,7 +136,7 @@ async function plan(subject: Principal, deps: SpreadsheetAccountDeps) {
     if (!names.has(rid)) {
       const current = await store.get("resources", rid);
       if (!current || current.spreadsheetErasing) retry();
-      fail(rid);
+      fail(rid, "resource");
     }
     if (grant.id !== `${rid}:${kind}:${hash}`) fail();
     grants.push(grant);

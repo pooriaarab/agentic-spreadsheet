@@ -1,11 +1,13 @@
 // Failure cases: shared owners lose data; kind collisions erase an agent; hidden cell stamps
 // survive; damaged grants or blobs permit partial success; failed blob cleanup cannot retry.
 import { createMemoryBlobs, createMemoryStore, createSharing, type Doc, type Query } from "agentic-identity";
+import type { AccountPackage } from "agentic-identity/account";
 import { expect, test } from "vitest";
 import { createAccess, resourceId, subjectId } from "./access.js";
 import { Workbook, type Principal } from "./core/workbook.js";
 import { toBase64 } from "./core/bytes.js";
-import { spreadsheetAccount } from "./account.js";
+import { spreadsheetAccount, type SpreadsheetAccountDeps } from "./account.js";
+const registryPackage: AccountPackage<SpreadsheetAccountDeps> = spreadsheetAccount;
 
 const ana: Principal = { id: "ana", kind: "human" };
 const bot: Principal = { id: "ana", kind: "agent_of_human" };
@@ -25,7 +27,7 @@ test("exports owned states, sharing, authored cells and machine labels as JSON",
   const deps = fresh();
   await make(deps, "mine");
   await make(deps, "theirs", bob, bot);
-  const out = await spreadsheetAccount.exportAccount(ana, deps);
+  const out = await registryPackage.exportAccount(ana, deps);
   expect(out.workbooks).toHaveLength(1);
   expect(out.workbooks[0]).toMatchObject({ id: "mine", state: expect.any(String) });
   expect(out.grants).toHaveLength(1);
@@ -230,4 +232,25 @@ test("a deletion after the workbook listing returns a neutral retry error", asyn
   await expect(spreadsheetAccount.eraseAccount(bob, deps)).rejects.toThrow(/^account scan changed; retry$/);
   deps.store.query = query;
   await spreadsheetAccount.eraseAccount(bob, deps);
+});
+
+test.each([true, false])("a held grant with a missing row distinguishes fence %s from damage", async (fenced) => {
+  const deps = fresh();
+  await make(deps, "mine", ana);
+  await make(deps, "bobs", bob);
+  await createAccess(deps.store).share(ana, "mine", { id: bob.id, kind: "human" }, "editor");
+  const rid = await resourceId("mine"), owner = `human:${await subjectId(ana.id)}`, query = deps.store.query.bind(deps.store);
+  let injected = false;
+  deps.store.query = async <T extends Doc = Doc>(collection: string, options?: Query) => {
+    if (collection === "workbooks" && !injected) {
+      injected = true;
+      await deps.store.delete("workbooks", "mine");
+      await deps.store.put("resources", rid, { ...(await deps.store.get("resources", rid))!, spreadsheetErasing: fenced });
+      if (fenced) await deps.store.put("spreadsheet_account_jobs", "pending", { owner, book: "mine", blob: "workbooks/mine/state", resource: rid });
+    }
+    return query<T>(collection, options);
+  };
+  await expect(spreadsheetAccount.exportAccount(bob, deps)).rejects.toThrow(fenced ? /^account scan changed; retry$/ : new RegExp(`damaged: resource ${rid}$`));
+  deps.store.query = query;
+  if (fenced) await spreadsheetAccount.eraseAccount(bob, deps);
 });
