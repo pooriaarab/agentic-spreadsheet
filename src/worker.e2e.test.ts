@@ -71,9 +71,11 @@ async function start(vars: Record<string, string>, persist = mkdtempSync(join(tm
       if (child.pid && !exited) process.kill(-child.pid, "SIGKILL");
       while (!exited) await new Promise((r) => setTimeout(r, 50));
     };
+    // A different test can claim the released port before this process binds it.
+    // Wait for this child to report its own address before probing it.
     for (let i = 0; i < 300; i += 1) {
       if (exited) break;
-      if (await fetch(`${url}/health`).then(() => true, () => false)) return { url, stop };
+      if (log.includes(`Ready on ${url}`) && await fetch(`${url}/health`).then(() => true, () => false)) return { url, stop };
       await new Promise((r) => setTimeout(r, 300));
     }
     await stop();
