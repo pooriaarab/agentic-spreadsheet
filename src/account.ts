@@ -2,7 +2,9 @@ import * as Y from "yjs";
 import { createSharing, ROLES, SUBJECT_KINDS, type Blobs, type Doc, type Json, type Store } from "agentic-identity";
 import { resourceId, subjectId } from "./access.js";
 import { fromBase64, toBase64 } from "./core/bytes.js";
-import { Workbook, PRINCIPAL_KINDS, type Principal } from "./core/workbook.js";
+import { Layout } from "./core/order.js";
+import { formatCell, MAX_ROW, MAX_COL } from "./core/a1.js";
+import { Workbook, PRINCIPAL_KINDS, isMachineMade, type Principal } from "./core/workbook.js";
 
 export interface SpreadsheetAccountDeps { store: Store; blobs: Blobs }
 export type SpreadsheetCollection = "workbooks" | "grants" | "authored" | "invites" | "links" | "audit";
@@ -43,13 +45,16 @@ function authored(wb: Workbook, subject: Principal, erase = false): Json[] {
     if (!(sheet instanceof Y.Map) || typeof sheet.get("name") !== "string") fail();
     const cells = sheet.get("cells");
     if (!(cells instanceof Y.Map)) fail();
+    const axes = ["row", "col"].map((axis) => new Layout((sheet.get(`${axis}Order`) as Y.Array<unknown> | undefined)?.toArray() ?? [], new Set((sheet.get(`${axis}Gone`) as Y.Map<unknown> | undefined)?.keys() ?? [])));
     for (const [key, value] of cells.entries()) {
       if (!key.endsWith(":by") && !key.endsWith(":fby")) continue;
       const stamp = value as Principal & { at?: unknown };
       if (!stamp || typeof stamp.id !== "string" || !PRINCIPAL_KINDS.includes(stamp.kind) || typeof stamp.at !== "string" || !Number.isFinite(Date.parse(stamp.at))) fail();
       if (!matches(value, subject)) continue;
       const cell = key.slice(0, key.lastIndexOf(":"));
-      found.push(plain({ sheet: sheet.get("name"), cellId: cell, field: key.endsWith(":fby") ? "format" : "content", author: { ...stamp, machine: stamp.kind !== "human" }, entries: Object.fromEntries([...cells.entries()].filter(([k]) => k.startsWith(`${cell}:`))) }));
+      const [rowId, colId] = cell.split("|"), row = axes[0]!.position(rowId), col = axes[1]!.position(colId);
+      const address = row !== null && col !== null && row <= MAX_ROW && col <= MAX_COL ? formatCell({ row, col }) : null;
+      found.push(plain({ address, shown: address ? wb.readRange(sheet.get("name") as string, address)[0]![0] : null, sheet: sheet.get("name"), cellId: cell, field: key.endsWith(":fby") ? "format" : "content", author: { ...stamp, machine: isMachineMade(stamp.kind) }, entries: Object.fromEntries([...cells.entries()].filter(([k]) => k.startsWith(`${cell}:`))) }));
       if (erase) cells.set(key, { ...stamp, id: ERASED });
     }
   }
@@ -149,7 +154,12 @@ async function plan(subject: Principal, deps: SpreadsheetAccountDeps) {
       if (!mentions && !owned.has(rid)) continue;
       if (typeof rid !== "string") fail();
       if ((await store.get("resources", rid))?.type !== "workbook") continue;
-      let mine = collection === "invites" && mentions;
+      let mine = false;
+      if (collection === "invites" && mentions) {
+        const creators = await rows(store, "audit", { resourceId: rid, action: "invite.create", targetId: row.id });
+        if (creators.length !== 1 || creators[0]!.data.principalId !== hash || !PRINCIPAL_KINDS.includes(creators[0]!.data.principalKind as never)) fail(names.get(rid));
+        mine = creators[0]!.data.principalKind === subject.kind;
+      }
       if (collection === "audit" && mentions) {
         const d = row.data;
         if (d.principalId === hash && !PRINCIPAL_KINDS.includes(d.principalKind as never)) fail();
@@ -174,8 +184,15 @@ async function resume(deps: SpreadsheetAccountDeps) {
     if (!PRINCIPAL_KINDS.includes(principalKind as never) || !/^p[0-9a-f]{64}$/.test(hash ?? "")) fail(book);
     if (blob !== undefined && !blob.startsWith(`workbooks/${book}/`)) fail(book);
     if (resource !== undefined && resource !== await resourceId(book)) fail(book);
-    // A candidate may have committed before a backend error. Keep it if it is live.
-    if (blob && (!candidate || (await deps.store.get("workbooks", book))?.blob !== blob)) await deps.blobs.delete(blob);
+    // Claim abandoned candidates atomically so an active replacement must abort.
+    const remove = !candidate || await deps.store.transaction(async (tx) => {
+      const current = await tx.get(JOBS, job.id);
+      if (!current) return false;
+      if ((await tx.get("workbooks", book))?.blob === blob) { await tx.delete(JOBS, job.id); return false; }
+      await tx.put(JOBS, job.id, { ...current, candidate: false });
+      return true;
+    });
+    if (blob && remove) await deps.blobs.delete(blob);
     if (resource !== undefined) {
       const kind = principalKind === "human" ? "human" : "agent";
       const context = { principalId: hash!, kind: principalKind as Principal["kind"], chain: [{ id: hash!, kind: kind as "human" | "agent" }], scopes: ["workbook:admin"] };
@@ -229,6 +246,7 @@ export const spreadsheetAccount: SpreadsheetAccount = {
         await deps.store.put(JOBS, candidate, { owner, book: b.id, blob: key, candidate: true });
         if (!await deps.blobs.put(key, fromBase64(state), { contentType: "application/octet-stream" })) fail(b.id);
         await deps.store.transaction(async (tx) => {
+          if ((await tx.get(JOBS, candidate))?.candidate !== true) throw new SpreadsheetAccountError("replacement cleanup started; retry erase");
           const now = await tx.get("workbooks", b.id);
           if (now?.blob !== b.data.blob || now?.state !== b.data.state) throw new SpreadsheetAccountError(`workbook changed: ${b.id}`);
           await tx.put("workbooks", b.id, { name: b.id, updatedAt: b.data.updatedAt, blob: key });

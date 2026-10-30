@@ -89,6 +89,7 @@ test("keeps formulas and format authors when rebuilding a shared workbook", asyn
   const wb = Workbook.fromState((await deps.blobs.get("workbooks/shared/state"))!.data);
   wb.writeRange("Sheet1", "C1", [["=A1"]], bob);
   await deps.blobs.put("workbooks/shared/state", wb.encode());
+  expect((await spreadsheetAccount.exportAccount(bob, deps)).workbooks).toHaveLength(1);
   await spreadsheetAccount.eraseAccount(bot, deps);
   const after = Workbook.fromState((await deps.blobs.get((await deps.store.get("workbooks", "shared"))!.blob as string))!.data);
   expect(after.readRange("Sheet1", "C1:C1")[0]![0]!.formula).toBe("=A1");
@@ -150,12 +151,26 @@ test("redacts invite addresses and link secrets, and removes only the subject's 
   await make(deps, "shared", bob, bot);
   const rid = await resourceId("shared"), hash = await subjectId(bot.id);
   await deps.store.put("invites", "mine", { resourceId: rid, createdBy: hash, email: "private@example.test", role: "viewer" });
-  await deps.store.put("audit", "mine", { resourceId: rid, principalId: hash, principalKind: bot.kind, rootId: hash, chain: [{ id: hash, kind: "agent" }] });
+  await deps.store.put("audit", "mine", { resourceId: rid, action: "invite.create", targetId: "mine", targetKind: "invite", principalId: hash, principalKind: bot.kind, rootId: hash, chain: [{ id: hash, kind: "agent" }] });
   await deps.store.put("links", "kept", { resourceId: rid, tokenHash: "secret", role: "viewer" });
+  expect((await spreadsheetAccount.exportAccount(ana, deps)).invites).toEqual([]);
   const mine = await spreadsheetAccount.exportAccount(bot, deps);
   expect(mine.invites).toMatchObject([{ id: "mine", for: "email" }]);
   expect(JSON.stringify(mine)).not.toContain("private@example.test");
   expect(JSON.stringify(await spreadsheetAccount.exportAccount(bob, deps))).not.toContain("secret");
   expect(await spreadsheetAccount.eraseAccount(bot, deps)).toMatchObject({ invites: 1, audit: 1 });
   expect(await deps.store.get("links", "kept")).not.toBeNull();
+});
+
+test("a concurrent erase cannot delete a candidate that later commits", async () => {
+  const deps = fresh();
+  await make(deps, "shared", bob, bot);
+  const put = deps.blobs.put.bind(deps.blobs);
+  deps.blobs.put = async (key, data, options) => {
+    const result = await put(key, data, options);
+    await spreadsheetAccount.eraseAccount({ id: "carol", kind: "human" }, deps);
+    return result;
+  };
+  await expect(spreadsheetAccount.eraseAccount(bot, deps)).rejects.toThrow(/retry/);
+  expect(await deps.blobs.get((await deps.store.get("workbooks", "shared"))!.blob as string)).not.toBeNull();
 });

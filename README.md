@@ -415,9 +415,8 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
 
 ## Account export and erase
 
-A host imports `spreadsheetAccount` from `agentic-spreadsheet/account`. Its typed
-`id`, `exportAccount(subject, deps)`, and `eraseAccount(subject, deps)` methods
-match the identity account registry contributor contract.
+Import `spreadsheetAccount` from `agentic-spreadsheet/account`. Its typed `id`,
+`exportAccount(subject, deps)`, and `eraseAccount(subject, deps)` match the identity registry contract.
 
 ```ts
 import { spreadsheetAccount } from "agentic-spreadsheet/account";
@@ -426,40 +425,30 @@ const data = await spreadsheetAccount.exportAccount(subject, { store, blobs });
 const counts = await spreadsheetAccount.eraseAccount(subject, { store, blobs });
 ```
 
-The export has plain JSON collections: `workbooks` (owned workbooks, with their
-full Yjs state as base64), `grants` (the subject's workbook roles), `authored`
-(cell content and format stamps on other workbooks), `invites`, `links`, and
-`audit`. The last three include records on owned workbooks and records the
-subject made. Invites omit emails and handles. Links omit token hashes. Workbook states
-include sheets, formulas, formats, deleted row cells, and stored CRDT history.
-There is no separate version archive or attachment store.
+The export has plain JSON collections: `workbooks` (owned Yjs states as base64), `grants`
+(the subject's roles), `authored` (cell content and format stamps on other workbooks),
+`invites`, `links`, and `audit`. Visible authored cells include A1 addresses and formulas.
+The last three collections include records on owned workbooks and records the subject made.
+Invites omit emails and handles. Links omit token hashes. States include sheets, formulas,
+formats, deleted row cells, and stored CRDT history. There is no separate version or attachment store.
 
-Erase deletes sole-owned workbooks, their blobs, and their sharing records.
-Other owners, including owners of parent folders, keep their workbooks. The
-subject's grants and invites go. Its audit entries go. On workbooks that stay,
-its cell author IDs become `(erased)`. Content and author kinds stay, so agent
-edits keep their machine labels. Changed states are rebuilt with fresh CRDT
-structs to remove replaced history. A second erase counts zero. Counts use the
-export collection names; a run that fails can have already removed some data.
-A durable cleanup journal keeps blob keys until deletion succeeds. Any erase
-resumes pending cleanup for all subjects. Finish interrupted calls before export.
+Erase deletes sole-owned workbooks, blobs, and sharing records. Other owners, including parent
+folder owners, keep their workbooks. The subject's grants, invites, and audit entries go.
+On workbooks that stay, author IDs become `(erased)`. Content and kinds stay, so machine labels stay.
+Changed states get fresh CRDT structs to remove replaced history. Counts use the export names.
+A repeat counts zero. A failed run can have removed some data. A durable journal keeps blob keys
+until cleanup succeeds. Any erase resumes pending cleanup for all subjects. Finish it before export.
 
-Stop writes and disconnect editing clients before export and erase. Clients
-with old Yjs state must reload after erase. Run this contributor before the
-identity account erase, which removes the sharing records. Sharing hashes IDs
-and maps every machine kind to `agent`, so machine kinds with one ID share
-roles and invites. Cell stamps match the exact ID and kind. Use distinct IDs
-for distinct machine accounts. Call once for each delegated principal; the
-package cannot infer which agents belong to a person. Links have no maker ID,
-so they leave only with their sole-owned workbook. Invites to an email cannot
-be matched to a subject ID. Blobs left by a prior failed save have no owner
-index and cannot be discovered through the blob port.
-
-Each call scans workbook blobs one at a time to find authors; its cost grows
-with all stored workbooks. Both calls refuse damaged states, stamps, and subject grants. Erase
-also refuses damaged owner grants, missing parents, folder cycles, and child
-resources. It checks these before new data changes. Backend failures throw;
-they never return a success report.
+Stop writes and disconnect editing clients first. Old clients must reload after erase.
+Run this contributor before identity erase. Sharing hashes IDs and maps machine kinds to `agent`.
+Machine kinds with one ID share roles. Stamps and invite creators match the exact kind.
+Use distinct machine IDs. Call once per delegated principal; the package cannot infer its person.
+Links have no maker ID and leave only with sole-owned workbooks. Invite recipients cannot be mapped
+to subject IDs. Orphan blobs from prior failed saves have no owner index and cannot be discovered.
+Each call scans all workbook blobs, one at a time. Its cost grows with the stored data.
+Damaged states, stamps, grants, owner chains, child resources, or missing invite creator audit rows
+stop the call. A missing blob with no cleanup journal needs operator repair. Errors name workbooks.
+Backend errors throw and never return a success report.
 
 ## Features
 
