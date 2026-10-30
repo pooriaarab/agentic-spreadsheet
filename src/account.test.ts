@@ -1,13 +1,11 @@
 // Failure cases: shared owners lose data; kind collisions erase an agent; hidden cell stamps
 // survive; damaged grants or blobs permit partial success; failed blob cleanup cannot retry.
 import { createMemoryBlobs, createMemoryStore, createSharing, type Doc, type Query } from "agentic-identity";
-import type { AccountPackage } from "agentic-identity/account";
 import { expect, test } from "vitest";
 import { createAccess, resourceId, subjectId } from "./access.js";
 import { Workbook, type Principal } from "./core/workbook.js";
 import { toBase64 } from "./core/bytes.js";
-import { spreadsheetAccount, type SpreadsheetAccountDeps } from "./account.js";
-const registryPackage: AccountPackage<SpreadsheetAccountDeps> = spreadsheetAccount;
+import { spreadsheetAccount } from "./account.js";
 
 const ana: Principal = { id: "ana", kind: "human" };
 const bot: Principal = { id: "ana", kind: "agent_of_human" };
@@ -27,7 +25,7 @@ test("exports owned states, sharing, authored cells and machine labels as JSON",
   const deps = fresh();
   await make(deps, "mine");
   await make(deps, "theirs", bob, bot);
-  const out = await registryPackage.exportAccount(ana, deps);
+  const out = await spreadsheetAccount.exportAccount(ana, deps);
   expect(out.workbooks).toHaveLength(1);
   expect(out.workbooks[0]).toMatchObject({ id: "mine", state: expect.any(String) });
   expect(out.grants).toHaveLength(1);

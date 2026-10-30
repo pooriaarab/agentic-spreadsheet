@@ -9,7 +9,7 @@ All notable changes to this project are listed here. The format follows
 
 ### Changed
 
-- Accept agentic dependency releases below 1.0.0 and keep runtime dependencies in production installs. Test current releases and the minimum supported design and realtime releases.
+- Accept agentic dependency releases below 1.0.0 and keep runtime dependencies in production installs. Test current and minimum supported releases.
 
 ## [0.14.2] - 2026-10-30
 
