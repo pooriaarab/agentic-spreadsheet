@@ -55,8 +55,10 @@ beforeAll(async () => {
     for (const stream of [child.stdout, child.stderr]) stream?.on("data", (chunk: Buffer) => (log = (log + chunk).slice(-1500)));
     const kill = async () => void (child.pid && !exited && process.kill(-child.pid, "SIGKILL"));
     const base = `http://127.0.0.1:${port}`;
+    // A different test can claim the released port before this process binds it.
+    // Wait for this child to report its own address before probing it.
     for (let i = 0; i < 300 && !exited; i += 1) {
-      if (await fetch(`${base}/health`).then(() => true, () => false)) {
+      if (log.includes(`Ready on ${base}`) && await fetch(`${base}/health`).then(() => true, () => false)) {
         [url, stop] = [base, kill];
         return;
       }
