@@ -35,6 +35,60 @@ Keywords: spreadsheet,sheets,formulas,grid,collaboration,agents,mcp,cli,csv,xlsx
   Presence works only from a checkout (src/ui-worker.ts). Without it, the UI still works and shows Offline.
 - CLI and MCP: run agentic-spreadsheet --help, or agentic-spreadsheet mcp.
 
+## Package export reference
+
+The examples above show the main calls. The lists below include the TypeScript types. Import types with `import type`.
+
+### `agentic-spreadsheet`
+
+`Workbook` holds sheets; `Engine` computes values. `parseCell`, `formatCell`, `parseRange`, `colIndex`, and `colLetters` handle A1 addresses. `parseCsv`, `formatCsv`, and `inferCell` handle CSV. `toBase64` and `fromBase64` convert bytes. `isMachineMade` checks a principal kind; `PRINCIPAL_KINDS` lists the kinds. `VERSION`, `MAX_COL`, `MAX_ROW`, `MAX_TEXT`, `MAX_SHEET_NAME`, and `MAX_STRUCTURE_COUNT` are constants. `SheetError` reports invalid workbook input.
+
+`createMemoryStore` and `createMemoryBlobs` make in-memory adapters. `createFileStore` and `createFileBlobs` make file adapters. `StoreConflictError` reports a failed transaction. `ctxFromEnv` makes a CLI context; `OPS` and `OpError` expose operations and their errors.
+
+Types: `Author`, `Blobs`, `Cell`, `CellFormat`, `CellFormatPatch`, `CellInput`, `CellPos`, `CellValue`, `Change`, `Ctx`, `ErrorCode`, `ErrorValue`, `FileStoreOptions`, `Op`, `Principal`, `PrincipalKind`, `RangePos`, `SheetInfo`, `Store`, `StoreOps`, and `Value`.
+
+```ts
+import { createMemoryStore, parseCell } from "agentic-spreadsheet";
+const store = createMemoryStore();
+const position = parseCell("B2");
+```
+
+### `agentic-spreadsheet/client`
+
+`createClient` makes the HTTP client and `SheetsApiError` reports HTTP failures. Types: `CallOptions`, `Cell`, `CellAuthor`, `ClientOptions`, `ErrorCode`, `FormulaError`, `InviteSummary`, `LinkSummary`, `PrincipalKind`, `ReadResult`, `ShareRole`, `SheetTarget`, `SheetsClient`, `SubjectKind`, and `Value`. Example: `createClient({ baseUrl: "https://sheets.example.com", token: "key" })`.
+
+### `agentic-spreadsheet/formats`
+
+`exportFile`, `importFile`, `formatOf`, `MIME`, `toFileBook`, and `addSheets` handle ODS and XLSX. `MAX_IMPORT_SHEETS` is the sheet limit. `SheetFormat` is the format type. Example: `formatOf("book.xlsx")` returns `"xlsx"`.
+
+### `agentic-spreadsheet/ui`
+
+`mount` mounts a sheet and `WorkbookView` is its React component. Types: `EmbedPrincipal`, `HostWorkbook`, `MountOptions`, `MountedSheet`, `PrincipalKind`, `RoomPresence`, `SheetCalls`, and `SheetsClient`. Example: `mount(element, { client, docId: "budget", principal: { kind: "agent", name: "bot" } })`.
+
+### `agentic-spreadsheet/ui.css`
+
+Load the styles with the UI:
+
+```ts
+import "agentic-spreadsheet/ui.css";
+```
+
+### `agentic-spreadsheet/worker`
+
+The `default` export is the Worker handler. `createApp` builds the HTTP app with supplied ports; `fromAuth` adapts an identity Auth port. `storageFor` builds ports from Worker bindings. `roomGrant` checks a presence request, `roomRole` caps its role, and `WS_PROTOCOL` names its WebSocket protocol. `AppOptions` and `WorkerEnv` are types.
+
+```ts
+import worker, { roomRole } from "agentic-spreadsheet/worker";
+const role = roomRole("editor", []);
+export default worker;
+```
+
+### `agentic-spreadsheet/account`
+
+`spreadsheetAccount` implements account export and erase; `SpreadsheetAccountError` reports damaged account data. `SpreadsheetAccount`, `SpreadsheetAccountDeps`, and `SpreadsheetCollection` are types. Example: `spreadsheetAccount.exportAccount(subject, { store, blobs })`.
+
+The CLI and MCP server are commands, not import subpaths. For example, run `npx agentic-spreadsheet --help` or `npx agentic-spreadsheet mcp`. The storage adapters above are root exports, not an adapters subpath.
+
 ## Docs
 
 - README: https://github.com/pooriaarab/agentic-spreadsheet
