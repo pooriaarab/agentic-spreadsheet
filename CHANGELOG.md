@@ -5,6 +5,12 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.14.3] - 2026-10-30
+
+### Changed
+
+- Accept agentic-identity 0.11 and keep runtime dependencies in production installs. Test current and minimum supported releases.
+
 ## [0.14.2] - 2026-10-30
 
 ### Changed
