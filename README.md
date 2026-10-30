@@ -413,6 +413,54 @@ it. `.dev.vars` stays out of git. Data lives in a local D1 and R2 under `.wrangl
   and `roomGrant` needs the same `DB` binding. For presence, run the Worker from
   a checkout, as `src/ui-worker.ts` does. Without presence, the UI still works and shows Offline.
 
+## Account export and erase
+
+A host imports `spreadsheetAccount` from `agentic-spreadsheet/account`. Its typed
+`id`, `exportAccount(subject, deps)`, and `eraseAccount(subject, deps)` methods
+match the identity account registry contributor contract.
+
+```ts
+import { spreadsheetAccount } from "agentic-spreadsheet/account";
+const subject = { id: "ana", kind: "human" } as const;
+const data = await spreadsheetAccount.exportAccount(subject, { store, blobs });
+const counts = await spreadsheetAccount.eraseAccount(subject, { store, blobs });
+```
+
+The export has plain JSON collections: `workbooks` (owned workbooks, with their
+full Yjs state as base64), `grants` (the subject's workbook roles), `authored`
+(cell content and format stamps on other workbooks), `invites`, `links`, and
+`audit`. The last three include records on owned workbooks and records the
+subject made. Links have no stored token hash in the export. Workbook states
+include sheets, formulas, formats, deleted row cells, and stored CRDT history.
+There is no separate version archive or attachment store.
+
+Erase deletes sole-owned workbooks, their blobs, and their sharing records.
+Other owners, including owners of parent folders, keep their workbooks. The
+subject's grants and invites go. Its audit entries go. On workbooks that stay,
+its cell author IDs become `(erased)`. Content and author kinds stay, so agent
+edits keep their machine labels. Changed states are rebuilt with fresh CRDT
+structs to remove replaced history. A second erase counts zero. Counts use the
+export collection names; a run that fails can have already removed some data.
+A durable cleanup journal keeps blob keys until deletion succeeds. Run erase
+again to finish an interrupted call before exporting.
+
+Stop writes and disconnect editing clients before export and erase. Clients
+with old Yjs state must reload after erase. Run this contributor before the
+identity account erase, which removes the sharing records. Sharing hashes IDs
+and maps every machine kind to `agent`, so machine kinds with one ID share
+roles and invites. Cell stamps match the exact ID and kind. Use distinct IDs
+for distinct machine accounts. Call once for each delegated principal; the
+package cannot infer which agents belong to a person. Links have no maker ID,
+so they leave only with their sole-owned workbook. Invites to an email cannot
+be matched to a subject ID. Blobs left by a prior failed save have no owner
+index and cannot be discovered through the blob port.
+
+Both calls refuse damaged workbook states, stamps, and subject grants. Erase
+also refuses damaged owner grants, missing parents, folder cycles, and child
+resources. It checks these before new data changes. Backend failures throw;
+they never return a success report.
+
+
 ## Features
 
 - A workbook is one Yjs document. Two copies merge. Content, each format field, and the editor stamp
