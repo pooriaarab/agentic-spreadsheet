@@ -111,6 +111,7 @@ test("retries old-blob cleanup after a shared state replacement commits", async 
 
 test("refuses invalid subjects and damaged stamps, including on unrelated workbooks", async () => {
   const deps = fresh();
+  await expect(spreadsheetAccount.eraseAccount(ana, { ...deps, blobs: { ...deps.blobs, put: undefined } } as never)).rejects.toThrow();
   await expect(spreadsheetAccount.eraseAccount({ id: "", kind: "agent" }, deps)).rejects.toThrow();
   await make(deps, "shared", bob);
   const wb = Workbook.fromState((await deps.blobs.get("workbooks/shared/state"))!.data);
@@ -138,7 +139,8 @@ test("resumes when sharing cleanup fails after the workbook row goes", async () 
   const deps = fresh();
   await make(deps, "mine");
   const transact = deps.store.transaction.bind(deps.store);
-  deps.store.transaction = async () => { throw new Error("offline"); };
+  let calls = 0;
+  deps.store.transaction = async (fn) => { if (++calls === 2) throw new Error("offline"); return transact(fn); };
   await expect(spreadsheetAccount.eraseAccount(ana, deps)).rejects.toThrow();
   expect(await deps.store.get("workbooks", "mine")).toBeNull();
   deps.store.transaction = transact;
@@ -162,17 +164,21 @@ test("redacts invite addresses and link secrets, and removes only the subject's 
   expect(await deps.store.get("links", "kept")).not.toBeNull();
 });
 
-test("a concurrent erase cannot delete a candidate that later commits", async () => {
+test.each(["before", "after"])("candidate cleanup %s upload keeps live state and removes aborted bytes", async (when) => {
   const deps = fresh();
   await make(deps, "shared", bob, bot);
   const put = deps.blobs.put.bind(deps.blobs);
+  let candidate = "";
   deps.blobs.put = async (key, data, options) => {
+    candidate = key;
+    if (when === "before") await spreadsheetAccount.eraseAccount({ id: "carol", kind: "human" }, deps);
     const result = await put(key, data, options);
-    await spreadsheetAccount.eraseAccount({ id: "carol", kind: "human" }, deps);
+    if (when === "after") await spreadsheetAccount.eraseAccount({ id: "carol", kind: "human" }, deps);
     return result;
   };
   await expect(spreadsheetAccount.eraseAccount(bot, deps)).rejects.toThrow(/retry/);
   expect(await deps.blobs.get((await deps.store.get("workbooks", "shared"))!.blob as string)).not.toBeNull();
+  expect(await deps.blobs.get(candidate)).toBeNull();
   deps.blobs.put = put;
   await spreadsheetAccount.eraseAccount(bot, deps);
 });
@@ -183,4 +189,29 @@ test("a damaged cleanup job cannot delete another owner's workbook", async () =>
   await deps.store.put("spreadsheet_account_jobs", "bad", { owner: `human:${await subjectId(ana.id)}`, book: "shared", blob: "workbooks/shared/state", resource: await resourceId("shared") });
   await expect(spreadsheetAccount.eraseAccount(ana, deps)).rejects.toThrow();
   expect(await deps.blobs.get("workbooks/shared/state")).not.toBeNull();
+});
+
+test("format-only exports omit another author's content and identity", async () => {
+  const deps = fresh();
+  await make(deps, "mine", ana);
+  const out = await spreadsheetAccount.exportAccount(bob, deps);
+  expect(out.authored).toHaveLength(1);
+  expect(out.authored[0]).toMatchObject({ address: "B1", shown: { format: { bold: true } } });
+  expect(JSON.stringify(out.authored)).not.toContain('"ana"');
+  expect(JSON.stringify(out.authored)).not.toContain("kept");
+});
+
+test("sole deletion captures a state another erase replaces after planning", async () => {
+  const deps = fresh(), keys = new Set(["workbooks/mine/state"]);
+  await make(deps, "mine", ana);
+  const put = deps.blobs.put.bind(deps.blobs), transact = deps.store.transaction.bind(deps.store);
+  deps.blobs.put = async (key, data, options) => { keys.add(key); return put(key, data, options); };
+  let injected = false;
+  deps.store.transaction = async (fn) => {
+    if (!injected) { injected = true; await spreadsheetAccount.eraseAccount(bob, deps); }
+    return transact(fn);
+  };
+  await spreadsheetAccount.eraseAccount(ana, deps);
+  expect(await deps.store.get("workbooks", "mine")).toBeNull();
+  for (const key of keys) expect(await deps.blobs.get(key)).toBeNull();
 });

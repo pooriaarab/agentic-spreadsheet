@@ -31,7 +31,7 @@ async function rows(store: Store, collection: string, where?: Record<string, str
 }
 function check(subject: Principal, deps: SpreadsheetAccountDeps) {
   if (typeof subject?.id !== "string" || !subject.id.trim() || subject.id === ERASED || !PRINCIPAL_KINDS.includes(subject.kind)) fail();
-  if (!deps?.store?.transaction || !deps.blobs?.get || !deps.blobs?.delete) fail();
+  if (!deps?.store?.transaction || !deps.blobs?.get || !deps.blobs?.put || !deps.blobs?.delete) fail();
 }
 const matches = (value: unknown, subject: Principal) => {
   const stamp = value as Principal | null;
@@ -54,7 +54,10 @@ function authored(wb: Workbook, subject: Principal, erase = false): Json[] {
       const cell = key.slice(0, key.lastIndexOf(":"));
       const [rowId, colId] = cell.split("|"), row = axes[0]!.position(rowId), col = axes[1]!.position(colId);
       const address = row !== null && col !== null && row <= MAX_ROW && col <= MAX_COL ? formatCell({ row, col }) : null;
-      found.push(plain({ address, shown: address ? wb.readRange(sheet.get("name") as string, address)[0]![0] : null, sheet: sheet.get("name"), cellId: cell, field: key.endsWith(":fby") ? "format" : "content", author: { ...stamp, machine: isMachineMade(stamp.kind) }, entries: Object.fromEntries([...cells.entries()].filter(([k]) => k.startsWith(`${cell}:`))) }));
+      const format = key.endsWith(":fby"), view = address ? wb.readRange(sheet.get("name") as string, address)[0]![0]! : null;
+      const shown = view && (format ? { format: view.format, formatAuthor: view.formatAuthor } : { value: view.value, formula: view.formula, author: view.author });
+      const entries = Object.fromEntries([...cells.entries()].filter(([k]) => format ? k === `${cell}:fby` || k.startsWith(`${cell}:fmt.`) : k === `${cell}:c` || k === `${cell}:by`));
+      found.push(plain({ address, shown, sheet: sheet.get("name"), cellId: cell, field: format ? "format" : "content", author: { ...stamp, machine: isMachineMade(stamp.kind) }, entries }));
       if (erase) cells.set(key, { ...stamp, id: ERASED });
     }
   }
@@ -87,6 +90,27 @@ async function open(data: Doc, deps: SpreadsheetAccountDeps, bookId: string) {
   } catch { return fail(bookId); }
 }
 
+async function soleOwner(store: Store, resourceId: string, hash: string, kind: string): Promise<boolean> {
+    let rid: string | undefined = resourceId;
+    let other = false;
+    const seen = new Set<string>();
+    while (rid !== undefined) {
+      if (seen.has(rid) || seen.size >= 16) fail();
+      seen.add(rid);
+      const resource = await store.get("resources", rid);
+      if (!resource) fail();
+      for (const owner of await rows(store, "grants", { resourceId: rid })) {
+        const g = owner.data;
+        if (!ROLES.includes(g.role as never) || !SUBJECT_KINDS.includes(g.subjectKind as never) || typeof g.subjectId !== "string" || !g.subjectId || owner.id !== `${rid}:${String(g.subjectKind)}:${g.subjectId}`) fail();
+        if (g.role === "owner" && (g.subjectKind !== kind || g.subjectId !== hash)) other = true;
+      }
+      if (resource.parentId != null && (typeof resource.parentId !== "string" || !resource.parentId)) fail();
+      rid = resource.parentId as string | undefined;
+      if (rid === null) rid = undefined;
+    }
+    return !other;
+}
+
 async function plan(subject: Principal, deps: SpreadsheetAccountDeps) {
   check(subject, deps);
   const { store } = deps;
@@ -109,24 +133,7 @@ async function plan(subject: Principal, deps: SpreadsheetAccountDeps) {
   }
   const sole = new Set<string>();
   for (const grant of grants.filter((g) => g.data.role === "owner")) {
-    let rid: string | undefined = grant.data.resourceId as string;
-    let other = false;
-    const seen = new Set<string>();
-    while (rid !== undefined) {
-      if (seen.has(rid) || seen.size >= 16) fail();
-      seen.add(rid);
-      const resource = await store.get("resources", rid);
-      if (!resource) fail();
-      for (const owner of await rows(store, "grants", { resourceId: rid })) {
-        const g = owner.data;
-        if (!ROLES.includes(g.role as never) || !SUBJECT_KINDS.includes(g.subjectKind as never) || typeof g.subjectId !== "string" || !g.subjectId || owner.id !== `${rid}:${String(g.subjectKind)}:${g.subjectId}`) fail();
-        if (g.role === "owner" && (g.subjectKind !== kind || g.subjectId !== hash)) other = true;
-      }
-      if (resource.parentId != null && (typeof resource.parentId !== "string" || !resource.parentId)) fail();
-      rid = resource.parentId as string | undefined;
-      if (rid === null) rid = undefined;
-    }
-    if (!other) {
+    if (await soleOwner(store, grant.data.resourceId as string, hash, kind)) {
       const resource = grant.data.resourceId as string;
       if ((await rows(store, "resources", { parentId: resource })).length) fail();
       sole.add(names.get(resource)!);
@@ -195,14 +202,20 @@ async function resume(deps: SpreadsheetAccountDeps) {
     if (resource === undefined && !candidate && blob && (await deps.store.get("workbooks", book))?.blob === blob) fail(book);
     if (resource !== undefined && await deps.store.get("resources", resource as string)) {
       const kind = principalKind === "human" ? "human" : "agent";
-      if (!(await createSharing(deps.store).can({ principalId: hash!, kind: principalKind as Principal["kind"], chain: [{ id: hash!, kind }], scopes: ["workbook:admin"] }, "admin", resource as string)).allowed) fail(book);
+      const grant = await deps.store.get("grants", `${resource}:${kind}:${hash}`);
+      if ((grant?.role !== "owner" || grant.resourceId !== resource || grant.subjectId !== hash || grant.subjectKind !== kind) && await deps.store.get("resources", resource as string)) fail(book);
+      try { if (await deps.store.get("resources", resource as string) && !await soleOwner(deps.store, resource as string, hash!, kind)) fail(book); }
+      catch (error) { if (await deps.store.get("resources", resource as string)) throw error; }
     }
     if (blob && remove) await deps.blobs.delete(blob);
     if (resource !== undefined) {
       const kind = principalKind === "human" ? "human" : "agent";
       const context = { principalId: hash!, kind: principalKind as Principal["kind"], chain: [{ id: hash!, kind: kind as "human" | "agent" }], scopes: ["workbook:admin"] };
       await deps.store.delete("workbooks", book);
-      if (await deps.store.get("resources", resource as string)) await createSharing(deps.store).deleteResource(context, resource as string);
+      if (await deps.store.get("resources", resource as string)) {
+        try { await createSharing(deps.store).deleteResource(context, resource as string); }
+        catch (error) { if (await deps.store.get("resources", resource as string)) throw error; }
+      }
     }
     await deps.store.delete(JOBS, job.id);
   }
@@ -238,7 +251,12 @@ export const spreadsheetAccount: SpreadsheetAccount = {
     const owner = `${subject.kind}:${p.hash}`;
     for (const b of p.opened) {
       if (p.sole.has(b.id)) {
-        await deps.store.put(JOBS, crypto.randomUUID(), { owner, book: b.id, ...(b.data.blob ? { blob: b.data.blob } : {}), resource: await resourceId(b.id) });
+        await deps.store.transaction(async (tx) => {
+          const now = await tx.get("workbooks", b.id), resource = await tx.get("resources", b.resource);
+          if (!resource) return;
+          await tx.put("resources", b.resource, { ...resource, spreadsheetErasing: true });
+          await tx.put(JOBS, crypto.randomUUID(), { owner, book: b.id, ...(now?.blob ? { blob: now.blob } : {}), resource: b.resource });
+        });
         await resume(deps);
         counts.workbooks++;
       } else if (b.stamps.length) {
@@ -249,15 +267,24 @@ export const spreadsheetAccount: SpreadsheetAccount = {
         const key = `workbooks/${b.id}/${crypto.randomUUID()}`;
         const candidate = crypto.randomUUID();
         await deps.store.put(JOBS, candidate, { owner, book: b.id, blob: key, candidate: true });
-        if (!await deps.blobs.put(key, fromBase64(state), { contentType: "application/octet-stream" })) fail(b.id);
-        await deps.store.transaction(async (tx) => {
-          if ((await tx.get(JOBS, candidate))?.candidate !== true) throw new SpreadsheetAccountError("replacement cleanup started; retry erase");
-          const now = await tx.get("workbooks", b.id);
-          if (now?.blob !== b.data.blob || now?.state !== b.data.state) throw new SpreadsheetAccountError(`workbook changed: ${b.id}`);
-          await tx.put("workbooks", b.id, { name: b.id, updatedAt: b.data.updatedAt, blob: key });
-          if (b.data.blob) await tx.put(JOBS, crypto.randomUUID(), { owner, book: b.id, blob: b.data.blob });
-          await tx.delete(JOBS, candidate);
-        });
+        try {
+          if (!await deps.blobs.put(key, fromBase64(state), { contentType: "application/octet-stream" })) fail(b.id);
+          await deps.store.transaction(async (tx) => {
+            if ((await tx.get(JOBS, candidate))?.candidate !== true) throw new SpreadsheetAccountError("replacement cleanup started; retry erase");
+            if ((await tx.get("resources", b.resource))?.spreadsheetErasing) throw new SpreadsheetAccountError("workbook deletion started; retry erase");
+            const now = await tx.get("workbooks", b.id);
+            if (now?.blob !== b.data.blob || now?.state !== b.data.state) throw new SpreadsheetAccountError(`workbook changed: ${b.id}`);
+            await tx.put("workbooks", b.id, { name: b.id, updatedAt: b.data.updatedAt, blob: key });
+            if (b.data.blob) await tx.put(JOBS, crypto.randomUUID(), { owner, book: b.id, blob: b.data.blob });
+            await tx.delete(JOBS, candidate);
+          });
+        } catch (error) {
+          // A claim can precede the upload, or a backend can commit then throw.
+          // Re-register the uploaded key; resume keeps it only if the row points at it.
+          await deps.store.put(JOBS, candidate, { owner, book: b.id, blob: key, candidate: true });
+          await resume(deps);
+          throw error;
+        }
         await resume(deps);
         counts.authored += b.stamps.length;
       }
