@@ -5,6 +5,12 @@ All notable changes to this project are listed here. The format follows
 
 ## [Unreleased]
 
+## [0.14.2] - 2026-10-30
+
+### Changed
+
+- Accept agentic-design 0.10 and agentic-realtime 0.6. Test with the current releases of all agentic dependencies.
+
 ## [0.14.1] - 2026-10-30
 
 ### Changed
